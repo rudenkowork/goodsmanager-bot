@@ -1,8 +1,11 @@
 {
   "name": "goodsmanager-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "Telegram bot for creating and tracking Nova Poshta shipments.",
   "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node index.js",
     "check": "node --check index.js && for file in src/*.js; do node --check \"$file\"; done"

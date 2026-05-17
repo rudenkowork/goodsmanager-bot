@@ -43,6 +43,7 @@ Do not put low-level API clients, JSON-store plumbing, password hashing, or gene
 
 - `data/store.json` creation, reading, and writing.
 - Active flow get/set/clear.
+- Railway Volume support through `STORE_PATH` or `RAILWAY_VOLUME_MOUNT_PATH`.
 
 `src/textUtils.js`
 
@@ -100,3 +101,12 @@ npm run check
 ```
 
 This checks `index.js` and every file in `src/`.
+
+## Railway
+
+- The bot runs as a polling worker with `npm start`.
+- Required variable: `BOT_TOKEN`.
+- Optional variable: `MAIN_ADMIN_TELEGRAM_USERNAME`.
+- Use a Railway Volume for `store.json` until Neon/Postgres is added.
+- Recommended volume mount path: `/app/data`.
+- Keep one replica only and keep Serverless off.

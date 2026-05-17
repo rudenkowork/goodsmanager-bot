@@ -62,7 +62,7 @@ const {
 } = require('./src/createTtnConfig');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const MAIN_ADMIN_TELEGRAM_USERNAME = 'timarudy';
+const MAIN_ADMIN_TELEGRAM_USERNAME = process.env.MAIN_ADMIN_TELEGRAM_USERNAME || 'timarudy';
 
 if (!BOT_TOKEN) {
   console.error('BOT_TOKEN is missing. Add it to .env before starting the bot.');
@@ -106,7 +106,27 @@ bot.on('polling_error', (error) => {
   console.error('Polling error:', error.message);
 });
 
+process.on('SIGINT', () => {
+  shutdown('SIGINT');
+});
+
+process.on('SIGTERM', () => {
+  shutdown('SIGTERM');
+});
+
 console.log('Goods Manager bot started.');
+
+async function shutdown(signal) {
+  console.log(`Received ${signal}. Stopping Telegram polling.`);
+
+  try {
+    await bot.stopPolling();
+  } catch (error) {
+    console.error('Failed to stop polling:', error.message);
+  }
+
+  process.exit(0);
+}
 
 async function handleMessage(msg) {
   const chatId = msg.chat.id;

@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const STORE_PATH = path.join(DATA_DIR, 'store.json');
+const DEFAULT_DATA_DIR = path.join(__dirname, '..', 'data');
+const STORE_PATH = getStorePath();
+const DATA_DIR = path.dirname(STORE_PATH);
 
 function ensureStoreFile(config) {
   if (!fs.existsSync(DATA_DIR)) {
@@ -72,7 +73,7 @@ function readStore() {
 }
 
 function writeStore(store) {
-  fs.writeFileSync(STORE_PATH, JSON.stringify(store, null, 2));
+  fs.writeFileSync(STORE_PATH, `${JSON.stringify(store, null, 2)}\n`);
 }
 
 function getFlow(msg) {
@@ -94,6 +95,18 @@ function clearFlow(msg) {
 
 function configFallbackMainAdmin() {
   return 'timarudy';
+}
+
+function getStorePath() {
+  if (process.env.STORE_PATH) {
+    return path.resolve(process.env.STORE_PATH);
+  }
+
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+    return path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'store.json');
+  }
+
+  return path.join(DEFAULT_DATA_DIR, 'store.json');
 }
 
 module.exports = {

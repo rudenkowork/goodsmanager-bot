@@ -39,6 +39,12 @@ Run syntax checks after code changes:
 npm run check
 ```
 
+Railway runs the bot with:
+
+```bash
+npm start
+```
+
 Start the bot only when explicitly requested:
 
 ```bash
@@ -84,6 +90,14 @@ Be careful with `data/store.json`.
 - Mask secrets in chat output.
 - Do not reset or delete runtime data unless the user asks or a stale flow must be cleared after a flow-shape change.
 - It is acceptable to remove a clearly invalid test key when fixing key validation.
+
+On Railway:
+
+- Use a Railway Volume for the JSON store until Neon/Postgres is added.
+- Preferred volume mount path is `/app/data`.
+- If mounting elsewhere, set `STORE_PATH`, for example `/data/store.json`.
+- Keep one replica only because Telegram polling must be single-process.
+- Keep Serverless off for polling mode.
 
 ## Main Files
 
@@ -147,6 +161,13 @@ Keep `index.js` as the owner of chat flow, but do not put low-level infrastructu
 
 - Human-readable architecture notes.
 - Keep it in sync when changing major flow or module responsibilities.
+
+`RAILWAY.md`
+
+- Railway deployment settings.
+- Required variables.
+- Volume setup for temporary JSON persistence.
+- Notes for the later Neon migration.
 
 ## Telegram UX Rules
 
