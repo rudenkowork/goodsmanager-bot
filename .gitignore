@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data
+data/store.json
+data/*.local.json
+data/*.backup.json
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Telegram bot runtime files
+*.session
+*.session-journal
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Build/cache output
+dist/
+build/
+coverage/
+.nyc_output/
+.cache/
+tmp/
+temp/

@@ -1,0 +1,13 @@
+{
+  "config": {
+    "mainAdminTelegramUsername": "timarudy",
+    "novaPostEndpoint": "https://api.novaposhta.ua/v2.0/json/"
+  },
+  "users": {},
+  "sessions": {},
+  "apiKeys": {},
+  "selectedApiKeyByUser": {},
+  "shipments": {},
+  "flows": {},
+  "botMessagesByChat": {}
+}
