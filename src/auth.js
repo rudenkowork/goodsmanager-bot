@@ -67,13 +67,22 @@ function isMainAdmin(msg) {
   return username === store.config.mainAdminTelegramUsername.toLowerCase();
 }
 
+function getAvailableApiKeyAliases(msg, store) {
+  const currentStore = store || readStore();
+  const allowMock = isMainAdmin(msg);
+
+  return Object.keys(currentStore.apiKeys)
+    .filter((alias) => allowMock || currentStore.apiKeys[alias].apiKey !== 'MOCK')
+    .sort();
+}
+
 function getSelectedApiKey(msg) {
   const user = assertLoggedIn(msg);
   const store = readStore();
+  const aliases = getAvailableApiKeyAliases(msg, store);
   let alias = store.selectedApiKeyByUser[user.login];
 
-  if (!alias || !store.apiKeys[alias]) {
-    const aliases = Object.keys(store.apiKeys).sort();
+  if (!alias || !store.apiKeys[alias] || !aliases.includes(alias)) {
     alias = aliases[0];
   }
 
@@ -104,9 +113,10 @@ function getApiKeyForCreateFlow(flow) {
 function getOptionalSelectedApiKey(msg) {
   const user = assertLoggedIn(msg);
   const store = readStore();
+  const aliases = getAvailableApiKeyAliases(msg, store);
   const alias = store.selectedApiKeyByUser[user.login];
 
-  if (!alias || !store.apiKeys[alias]) {
+  if (!alias || !store.apiKeys[alias] || !aliases.includes(alias)) {
     return {
       alias: '',
       apiKey: '',
@@ -129,6 +139,7 @@ module.exports = {
   assertMainAdminTelegram,
   createUserRecord,
   getApiKeyForCreateFlow,
+  getAvailableApiKeyAliases,
   getOptionalSelectedApiKey,
   getSelectedApiKey,
   getSessionUser,

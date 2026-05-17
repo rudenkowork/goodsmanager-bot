@@ -7,6 +7,7 @@ const {
   assertMainAdminTelegram,
   createUserRecord,
   getApiKeyForCreateFlow,
+  getAvailableApiKeyAliases,
   getOptionalSelectedApiKey,
   getSelectedApiKey,
   getSessionUser,
@@ -19,7 +20,6 @@ const {
   callNovaPost,
   firstDataItem,
   resolveCityRef,
-  todayForNovaPost,
   validateNovaPostApiKey,
 } = require('./src/novaPost');
 const {
@@ -82,8 +82,6 @@ bot.setMyCommands([
   { command: 'menu', description: 'Показати панель дій' },
   { command: 'help', description: 'Підказки по боту' },
   { command: 'status', description: 'Статус бота' },
-  { command: 'track', description: 'Відстежити ТТН' },
-  { command: 'create_ttn', description: 'Створити ТТН через JSON' },
   { command: 'clear_chat', description: 'Очистити повідомлення бота' },
 ]).catch((error) => {
   console.error('Failed to set bot commands:', error.message);
@@ -201,6 +199,7 @@ async function handleMessage(msg) {
   }
 
   if (command === '/mockup') {
+    assertMainAdminTelegram(msg);
     await handleMockup(msg);
     return;
   }
@@ -250,21 +249,6 @@ async function handleMessage(msg) {
     return;
   }
 
-  if (command === '/track' || command === '/statuses') {
-    await handleTrack(msg, args);
-    return;
-  }
-
-  if (command === '/create_ttn') {
-    await handleCreateTtn(msg, args);
-    return;
-  }
-
-  if (command === '/ttn_template') {
-    await handleTtnTemplate(msg);
-    return;
-  }
-
   if (command === '/cities') {
     await handleCities(msg, args);
     return;
@@ -304,9 +288,7 @@ async function handleMessage(msg) {
 }
 
 async function sendStart(msg) {
-  const store = readStore();
   const name = msg.from && msg.from.first_name ? msg.from.first_name : 'друже';
-  const mainAdmin = store.config.mainAdminTelegramUsername;
   const user = getSessionUser(msg);
   const actionLine = user
     ? 'Оберіть потрібну дію на панелі нижче.'
@@ -319,8 +301,6 @@ async function sendStart(msg) {
       'Я допоможу швидко створити ТТН, перевірити статус посилки та працювати з кабінетами Нової пошти.',
       '',
       actionLine,
-      '',
-      `Головний адмін: @${mainAdmin}`,
     ].join('\n'),
     menuOptions(msg)
   );
@@ -337,11 +317,6 @@ async function sendHelp(msg) {
     `${BUTTONS.addKey} - збережемо API-ключ із кабінету Нової пошти.`,
     `${BUTTONS.keys} - покажу збережені кабінети.`,
     `${BUTTONS.clearChat} - приберу останні повідомлення бота з чату.`,
-    '',
-    'Швидкі команди теж працюють:',
-    '/track TTN [phone]',
-    '/create_ttn {json}',
-    '/npget Model calledMethod {json}',
   ];
 
   if (user && isMainAdmin(msg)) {
@@ -541,7 +516,7 @@ async function startWarehousesFlow(msg) {
 async function startCreateTtnFlow(msg) {
   assertLoggedIn(msg);
   const store = readStore();
-  const aliases = Object.keys(store.apiKeys).sort();
+  const aliases = getAvailableApiKeyAliases(msg, store);
 
   if (!aliases.length) {
     await sendText(
@@ -745,6 +720,12 @@ async function handleAddKeyFlowInput(msg, flow, text) {
   const store = readStore();
   const alias = flow.data.alias;
   const apiKey = text.trim();
+
+  if (apiKey === 'MOCK' && !isMainAdmin(msg)) {
+    await sendText(msg.chat.id, 'Тестовий MOCK-кабінет доступний тільки адміну.', cancelOptions());
+    return;
+  }
+
   const keyValidation = await validateNovaPostApiKey(apiKey);
 
   if (!keyValidation.ok) {
@@ -903,9 +884,10 @@ async function handleCreateTtnFlowInput(msg, flow, text) {
 async function handleCreateTtnKeySelection(msg, flow, text) {
   const alias = normalizeAlias(text);
   const store = readStore();
+  const aliases = getAvailableApiKeyAliases(msg, store);
 
-  if (!store.apiKeys[alias]) {
-    await sendText(msg.chat.id, 'Не бачу такого кабінету. Натисніть один із варіантів нижче.', keyboardOptions(makeButtonRows(Object.keys(store.apiKeys).sort(), 2, true)));
+  if (!store.apiKeys[alias] || !aliases.includes(alias)) {
+    await sendText(msg.chat.id, 'Не бачу такого кабінету. Натисніть один із варіантів нижче.', keyboardOptions(makeButtonRows(aliases, 2, true)));
     return;
   }
 
@@ -1859,15 +1841,18 @@ async function handleMockup(msg) {
       '/cities Київ',
       '/warehouses Київ 1',
       '',
-      '5. Створити тестову ТТН:',
-      '/create_ttn {"Description":"Тестова посилка","Weight":"1","Cost":"500","RecipientName":"Іван Петренко","RecipientsPhone":"380501112233"}',
+      '5. Створіть тестову ТТН через кнопку:',
+      BUTTONS.createTtn,
       '',
-      '6. Трекінг mock-ТТН:',
-      '/track 20450000000001',
-      '/track 20450000000002',
-      '/track 20450000000003',
-      '/track 20450000000004',
-      '/track 20450000000005',
+      '6. Перевірте mock-ТТН через кнопку:',
+      BUTTONS.track,
+      '',
+      'Тестові номери:',
+      '20450000000001',
+      '20450000000002',
+      '20450000000003',
+      '20450000000004',
+      '20450000000005',
       '',
       'Підказка: остання цифра mock-ТТН змінює статус. 1 - ще не відправлена, 2 - в дорозі, 3 - у відділенні, 4 - отримана, 5 - повернута.',
     ].join('\n'),
@@ -1997,6 +1982,12 @@ async function handleAddKey(msg, args) {
 
   const alias = normalizeAlias(parts[0]);
   const apiKey = parts.slice(1).join('').trim();
+
+  if (apiKey === 'MOCK' && !isMainAdmin(msg)) {
+    await sendText(msg.chat.id, 'Тестовий MOCK-кабінет доступний тільки адміну.', menuOptions(msg));
+    return;
+  }
+
   const keyValidation = await validateNovaPostApiKey(apiKey);
 
   if (!keyValidation.ok) {
@@ -2047,7 +2038,7 @@ async function handleDeleteKey(msg, args) {
 async function handleKeys(msg) {
   assertLoggedIn(msg);
   const store = readStore();
-  const aliases = Object.keys(store.apiKeys).sort();
+  const aliases = getAvailableApiKeyAliases(msg, store);
 
   if (!aliases.length) {
     await sendText(msg.chat.id, `Кабінетів ще немає. Натисніть "${BUTTONS.addKey}", щоб додати перший.`, menuOptions(msg));
@@ -2069,7 +2060,9 @@ async function handleUseKey(msg, args) {
   }
 
   const store = readStore();
-  if (!store.apiKeys[alias]) {
+  const aliases = getAvailableApiKeyAliases(msg, store);
+
+  if (!store.apiKeys[alias] || !aliases.includes(alias)) {
     await sendText(msg.chat.id, 'Такий кабінет не знайдено.');
     return;
   }
@@ -2078,30 +2071,6 @@ async function handleUseKey(msg, args) {
   writeStore(store);
 
   await sendText(msg.chat.id, `Обрано кабінет: ${alias}`, menuOptions(msg));
-}
-
-async function handleTrack(msg, args) {
-  assertLoggedIn(msg);
-
-  const parts = splitArgs(args);
-  if (!parts.length) {
-    await sendText(msg.chat.id, 'Формат команди: /track TTN [phone]');
-    return;
-  }
-
-  await trackShipment(msg, parts[0], parts[1] || '');
-}
-
-async function handleCreateTtn(msg, args) {
-  assertLoggedIn(msg);
-  const methodProperties = parseJsonArgument(args);
-
-  if (!methodProperties) {
-    await sendText(msg.chat.id, 'Формат команди: /create_ttn {json}\nПриклад: /ttn_template');
-    return;
-  }
-
-  await createTtnFromProperties(msg, methodProperties);
 }
 
 async function trackShipment(msg, documentNumber, phone) {
@@ -2147,48 +2116,6 @@ async function createTtnFromProperties(msg, methodProperties, selectedKey) {
       item.Ref ? `Ref: ${item.Ref}` : '',
       `Кабінет: ${key.alias}`,
     ].filter(Boolean).join('\n'),
-    menuOptions(msg)
-  );
-}
-
-async function handleTtnTemplate(msg) {
-  assertLoggedIn(msg);
-
-  const template = {
-    NewAddress: '1',
-    PayerType: 'Sender',
-    PaymentMethod: 'Cash',
-    CargoType: 'Parcel',
-    VolumeGeneral: '0.001',
-    Weight: '1',
-    ServiceType: 'WarehouseWarehouse',
-    SeatsAmount: '1',
-    Description: 'Товар',
-    Cost: '500',
-    CitySender: 'sender city Ref',
-    Sender: 'sender counterparty Ref',
-    SenderAddress: 'sender warehouse Ref',
-    ContactSender: 'sender contact Ref',
-    SendersPhone: '380XXXXXXXXX',
-    CityRecipient: 'recipient city Ref',
-    RecipientName: 'Прізвище Імʼя По батькові',
-    RecipientType: 'PrivatePerson',
-    RecipientAddressName: 'recipient warehouse number or name',
-    RecipientsPhone: '380XXXXXXXXX',
-    DateTime: todayForNovaPost(),
-  };
-
-  await sendText(
-    msg.chat.id,
-    [
-      'Надішліть команду так:',
-      '/create_ttn {json}',
-      '',
-      'Шаблон methodProperties:',
-      JSON.stringify(template, null, 2),
-      '',
-      'Ref-значення можна перевірити через /cities, /warehouses, /counterparties, /contacts.',
-    ].join('\n'),
     menuOptions(msg)
   );
 }
@@ -2489,7 +2416,6 @@ function menuKeyboard(msg) {
   if (!user) {
     return [
       [BUTTONS.login],
-      [BUTTONS.mockup],
     ];
   }
 
