@@ -80,6 +80,7 @@ Example empty structure lives in:
 - `sessions`: Telegram user id to logged-in account;
 - `apiKeys`: saved Nova Poshta cabinets;
 - `selectedApiKeyByUser`: selected cabinet per local bot user;
+- `defaultSenders`: saved sender/contact pairs per local bot user and cabinet;
 - `defaultSenderWarehouses`: saved sender branches per local bot user and cabinet;
 - `shipments`: created TTNs and raw API responses;
 - `flows`: active Telegram conversation flows;
@@ -141,6 +142,7 @@ Keep `index.js` as the owner of chat flow, but do not put low-level infrastructu
 - `data/store.json` creation.
 - Store read/write.
 - Active flow get/set/clear.
+- Saved default senders.
 - Saved default sender branches.
 
 `src/textUtils.js`
@@ -215,30 +217,32 @@ Current flow:
 3. Enter weight.
 4. Enter declared cost.
 5. Show a sender-section notice.
-6. Choose sender FOP/company from Nova Poshta API, or use the only available sender automatically.
-7. Choose sender contact person from Nova Poshta API, or use the only available contact automatically.
-8. If contact phone exists, use it automatically and skip sender phone input.
-9. If saved sender branches exist, choose one by name or choose another branch.
-10. If no saved sender branch is used, choose sender area.
-11. Choose sender settlement type: city, urban-type settlement, settlement, or village.
-12. Choose sender settlement.
-13. Enter sender branch number. Sender postomat is not offered.
-14. Validate sender branch through Nova Poshta API and confirm full address.
-15. Show a recipient-section notice.
-16. Choose recipient area.
-17. Choose recipient settlement type.
-18. Choose recipient settlement.
-19. Choose recipient delivery point type: branch or postomat.
-20. Enter recipient branch/postomat number.
-21. Validate recipient point through Nova Poshta API and confirm full address.
-22. Enter recipient full name.
-23. Enter recipient phone.
-24. Build Nova Poshta `methodProperties` and create TTN.
+6. If saved sender/contact pairs exist, choose one by name or choose another sender.
+7. If no saved sender is used, choose sender FOP/company from all senders returned by the Nova Poshta API key.
+8. Choose sender contact person from Nova Poshta API, or use the only available contact automatically.
+9. If contact phone exists, use it automatically and skip sender phone input.
+10. If saved sender branches exist, choose one by name or choose another branch.
+11. If no saved sender branch is used, choose sender area.
+12. Choose sender settlement type: city, urban-type settlement, settlement, or village.
+13. Choose sender settlement.
+14. Enter sender branch number. Sender postomat is not offered.
+15. Validate sender branch through Nova Poshta API and confirm full address.
+16. Show a recipient-section notice.
+17. Choose recipient area.
+18. Choose recipient settlement type.
+19. Choose recipient settlement.
+20. Choose recipient delivery point type: branch or postomat.
+21. Enter recipient branch/postomat number.
+22. Validate recipient point through Nova Poshta API and confirm full address.
+23. Enter recipient full name.
+24. Enter recipient phone.
+25. Build Nova Poshta `methodProperties` and create TTN.
 
 Important:
 
 - Normal users should not type Nova Poshta `Ref` values.
 - Sender counterparty and contact refs are selected by button, then saved internally.
+- New senders are created in the Nova Poshta cabinet first, then the bot can refresh and show them by API key.
 - City and warehouse refs are selected or resolved internally.
 - `SeatsAmount` is not asked in UX. It defaults to `1` in `buildTtnProperties`.
 - `PayerType` is not asked in UX. It uses the default in `buildTtnProperties`.

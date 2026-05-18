@@ -107,6 +107,8 @@ bot.setMyCommands([
   { command: 'menu', description: 'Показати панель дій' },
   { command: 'help', description: 'Підказки по боту' },
   { command: 'status', description: 'Статус бота' },
+  { command: 'add_default_sender', description: 'Зберегти стандартного відправника' },
+  { command: 'add_default_warehouse', description: 'Зберегти стандартне відділення' },
   { command: 'clear_chat', description: 'Очистити повідомлення бота' },
 ]).catch((error) => {
   console.error('Failed to set bot commands:', error.message);
@@ -264,6 +266,11 @@ async function handleMessage(msg) {
     return;
   }
 
+  if (command === '/add_default_sender') {
+    await startDefaultSenderFlow(msg);
+    return;
+  }
+
   if (command === '/delkey') {
     await handleDeleteKey(msg, args);
     return;
@@ -345,6 +352,7 @@ async function sendHelp(msg) {
     `${BUTTONS.createTtn} - проведу крок за кроком і створю накладну.`,
     `${BUTTONS.track} - перевірю статус посилки за номером ТТН.`,
     `${BUTTONS.addKey} - збережемо API-ключ із кабінету Нової пошти.`,
+    `${BUTTONS.addDefaultSender} - збережемо відправника для швидких ТТН.`,
     `${BUTTONS.addDefaultWarehouse} - збережемо відділення відправника для швидких ТТН.`,
     `${BUTTONS.keys} - покажу збережені кабінети.`,
     `${BUTTONS.clearChat} - приберу останні повідомлення бота з чату.`,
@@ -398,6 +406,11 @@ async function handleMenuButton(msg, text) {
 
   if (text === BUTTONS.addKey) {
     await startAddKeyFlow(msg);
+    return;
+  }
+
+  if (text === BUTTONS.addDefaultSender) {
+    await startDefaultSenderFlow(msg);
     return;
   }
 
@@ -550,6 +563,43 @@ async function startDefaultSenderWarehouseFlow(msg) {
   );
 }
 
+async function startDefaultSenderFlow(msg) {
+  assertLoggedIn(msg);
+  const store = readStore();
+  const aliases = getAvailableApiKeyAliases(msg, store);
+
+  if (!aliases.length) {
+    await sendText(
+      msg.chat.id,
+      'Спочатку додайте кабінет Нової пошти, а потім збережемо стандартного відправника.',
+      menuOptions(msg)
+    );
+    return;
+  }
+
+  const flow = {
+    type: 'defaultSender',
+    step: -1,
+    data: {},
+  };
+
+  if (aliases.length === 1) {
+    flow.data.apiKeyAlias = aliases[0];
+    flow.step = 0;
+    setFlow(msg, flow);
+    await sendText(msg.chat.id, `Кабінет: ${aliases[0]}`);
+    await offerDefaultSenderChoices(msg, flow, 1);
+    return;
+  }
+
+  setFlow(msg, flow);
+  await sendText(
+    msg.chat.id,
+    'Для якого кабінету зберегти стандартного відправника?',
+    keyboardOptions(makeButtonRows(aliases, 2, true))
+  );
+}
+
 async function startTrackFlow(msg) {
   assertLoggedIn(msg);
 
@@ -658,6 +708,11 @@ async function handleFlowInput(msg, flow, text) {
     return;
   }
 
+  if (flow.type === 'defaultSender') {
+    await handleDefaultSenderFlowInput(msg, flow, text);
+    return;
+  }
+
   if (flow.type === 'track') {
     await handleTrackFlowInput(msg, flow, text);
     return;
@@ -686,6 +741,11 @@ async function handleFlowInput(msg, flow, text) {
 async function handleFlowBack(msg, flow) {
   if (flow.type === 'defaultSenderWarehouse') {
     await handleDefaultSenderWarehouseBack(msg, flow);
+    return;
+  }
+
+  if (flow.type === 'defaultSender') {
+    await handleDefaultSenderBack(msg, flow);
     return;
   }
 
@@ -784,6 +844,28 @@ async function handleDefaultSenderWarehouseBack(msg, flow) {
   flow.step -= 1;
   removeDefaultSenderWarehouseValue(flow, DEFAULT_SENDER_WAREHOUSE_FIELDS[flow.step]);
   await askNextDefaultSenderWarehouseField(msg, flow);
+}
+
+async function handleDefaultSenderBack(msg, flow) {
+  if (flow.step <= 0) {
+    clearFlow(msg);
+    await sendText(msg.chat.id, 'Повертаю Вас у головне меню.', menuOptions(msg));
+    return;
+  }
+
+  flow.step -= 1;
+  delete flow.mode;
+  delete flow.pendingField;
+  clearPagedChoiceState(flow);
+
+  if (flow.step === 0) {
+    delete flow.data.Sender;
+    delete flow.data.SenderDescription;
+    await offerDefaultSenderChoices(msg, flow, 1);
+    return;
+  }
+
+  await offerDefaultSenderContactChoices(msg, flow, 1);
 }
 
 async function handleLoginFlowInput(msg, flow, text) {
@@ -1118,6 +1200,167 @@ async function saveDefaultSenderWarehouse(msg, data) {
   );
 }
 
+async function handleDefaultSenderFlowInput(msg, flow, text) {
+  if (flow.step === -1) {
+    await handleDefaultSenderKeySelection(msg, flow, text);
+    return;
+  }
+
+  if (flow.mode === 'defaultSenderChoice') {
+    await handleDefaultSenderChoice(msg, flow, text);
+    return;
+  }
+
+  if (flow.mode === 'defaultSenderContactChoice') {
+    await handleDefaultSenderContactChoice(msg, flow, text);
+    return;
+  }
+
+  clearFlow(msg);
+  await sendText(msg.chat.id, 'Не вдалося продовжити дію. Почніть ще раз із меню.', menuOptions(msg));
+}
+
+async function handleDefaultSenderKeySelection(msg, flow, text) {
+  const alias = normalizeAlias(text);
+  const store = readStore();
+  const aliases = getAvailableApiKeyAliases(msg, store);
+
+  if (!store.apiKeys[alias] || !aliases.includes(alias)) {
+    await sendText(msg.chat.id, 'Не бачу такого кабінету. Натисніть один із варіантів нижче.', keyboardOptions(makeButtonRows(aliases, 2, true)));
+    return;
+  }
+
+  flow.data.apiKeyAlias = alias;
+  flow.step = 0;
+  setFlow(msg, flow);
+  await offerDefaultSenderChoices(msg, flow, 1);
+}
+
+async function offerDefaultSenderChoices(msg, flow, page) {
+  const key = getApiKeyForCreateFlow(flow);
+  const senders = await fetchSenderChoices(key.apiKey);
+
+  if (!senders.length) {
+    const choices = addSenderActionChoices([]);
+    flow.mode = 'defaultSenderChoice';
+    setPagedChoiceState(flow, 'У цьому кабінеті не знайдено відправників.', choices, 1, 1);
+    setFlow(msg, flow);
+    await sendText(msg.chat.id, 'Додайте відправника в кабінеті Нової пошти й натисніть "Оновити список".', pagedChoiceOptions(flow));
+    return;
+  }
+
+  const choices = addSenderActionChoices(senders);
+  flow.mode = 'defaultSenderChoice';
+  setPagedChoiceState(flow, 'Оберіть відправника, якого зберегти для швидких ТТН.', choices, 1, page);
+  setFlow(msg, flow);
+
+  await sendPagedChoiceList(msg, flow);
+}
+
+async function handleDefaultSenderChoice(msg, flow, text) {
+  if (handleLocalChoicePageChange(flow, text)) {
+    setFlow(msg, flow);
+    await sendPagedChoiceList(msg, flow);
+    return;
+  }
+
+  if (await handleSenderActionChoice(msg, flow, text, () => offerDefaultSenderChoices(msg, flow, 1))) {
+    return;
+  }
+
+  const choice = findChoiceByText(getCurrentPageChoices(flow), text);
+
+  if (!choice) {
+    await sendText(msg.chat.id, 'Натисніть відправника зі списку нижче.', pagedChoiceOptions(flow));
+    return;
+  }
+
+  flow.data.Sender = choice.value;
+  flow.data.SenderDescription = choice.description;
+  flow.step = 1;
+  clearPagedChoiceState(flow);
+  await offerDefaultSenderContactChoices(msg, flow, 1);
+}
+
+async function offerDefaultSenderContactChoices(msg, flow, page) {
+  const key = getApiKeyForCreateFlow(flow);
+  const contacts = await fetchSenderContactChoices(key.apiKey, flow.data.Sender);
+
+  if (!contacts.length) {
+    await sendText(msg.chat.id, 'Для цього відправника не знайдено контактів. Додайте контакт у кабінеті Нової пошти й натисніть "Назад".', listChoiceOptions([]));
+    return;
+  }
+
+  flow.mode = 'defaultSenderContactChoice';
+  setPagedChoiceState(flow, 'Оберіть ПІБ і телефон для цього відправника.', contacts, 1, page);
+  setFlow(msg, flow);
+
+  await sendPagedChoiceList(msg, flow);
+}
+
+async function handleDefaultSenderContactChoice(msg, flow, text) {
+  if (handleLocalChoicePageChange(flow, text)) {
+    setFlow(msg, flow);
+    await sendPagedChoiceList(msg, flow);
+    return;
+  }
+
+  const choice = findChoiceByText(getCurrentPageChoices(flow), text);
+
+  if (!choice) {
+    await sendText(msg.chat.id, 'Натисніть контакт зі списку нижче.', pagedChoiceOptions(flow));
+    return;
+  }
+
+  flow.data.ContactSender = choice.value;
+  flow.data.ContactSenderDescription = choice.description;
+  flow.data.SendersPhone = choice.phone;
+  await saveDefaultSender(msg, flow.data);
+}
+
+async function saveDefaultSender(msg, data) {
+  const user = assertLoggedIn(msg);
+  const store = readStore();
+  const alias = normalizeAlias(data.apiKeyAlias);
+  const sender = {
+    id: `${Date.now()}`,
+    name: trimButtonLabel(formatSavedSenderLabel(data)),
+    senderRef: data.Sender,
+    senderDescription: data.SenderDescription,
+    contactRef: data.ContactSender,
+    contactDescription: data.ContactSenderDescription,
+    phone: data.SendersPhone || '',
+    createdAt: new Date().toISOString(),
+  };
+
+  if (!store.defaultSenders) {
+    store.defaultSenders = {};
+  }
+
+  if (!store.defaultSenders[user.login]) {
+    store.defaultSenders[user.login] = {};
+  }
+
+  if (!store.defaultSenders[user.login][alias]) {
+    store.defaultSenders[user.login][alias] = [];
+  }
+
+  store.defaultSenders[user.login][alias].push(sender);
+  delete store.flows[String(msg.from.id)];
+  writeStore(store);
+
+  await sendText(
+    msg.chat.id,
+    [
+      'Готово, стандартного відправника збережено ✅',
+      sender.name,
+      '',
+      'Під час створення ТТН він буде кнопкою у виборі відправника.',
+    ].join('\n'),
+    menuOptions(msg)
+  );
+}
+
 async function handleTrackFlowInput(msg, flow, text) {
   if (flow.step === 0) {
     flow.data.documentNumber = text.trim();
@@ -1192,6 +1435,11 @@ async function handleCreateTtnFlowInput(msg, flow, text) {
 
   if (flow.mode === 'senderChoice') {
     await handleCreateTtnSenderChoice(msg, flow, text);
+    return;
+  }
+
+  if (flow.mode === 'savedSenderChoice') {
+    await handleCreateTtnSavedSenderChoice(msg, flow, text);
     return;
   }
 
@@ -1586,26 +1834,24 @@ async function handleCreateTtnSenderWarehouseDefaultChoice(msg, flow, text) {
 }
 
 async function offerSenderChoices(msg, flow, field, page) {
-  const key = getApiKeyForCreateFlow(flow);
-  const response = await callNovaPost(key.apiKey, 'Counterparty', 'getCounterparties', {
-    CounterpartyProperty: 'Sender',
-    Page: '1',
-  });
-  const senders = response.data.map((counterparty) => {
-    return {
-      label: trimButtonLabel(formatCounterpartyButtonLabel(counterparty)),
-      value: counterparty.Ref,
-      description: counterparty.Description,
-      search: counterparty.Description,
-    };
-  });
-
-  if (!senders.length) {
-    await sendText(msg.chat.id, 'У цьому кабінеті не знайдено ФОП або компанію відправника.', listChoiceOptions([]));
+  if (!flow.senderDefaultOffered && await offerSavedSenderChoices(msg, flow, field)) {
     return;
   }
 
-  if (senders.length === 1) {
+  const key = getApiKeyForCreateFlow(flow);
+  const senders = await fetchSenderChoices(key.apiKey);
+
+  if (!senders.length) {
+    const choices = addSenderActionChoices([]);
+    flow.mode = 'senderChoice';
+    flow.pendingField = field.key;
+    setPagedChoiceState(flow, 'У цьому кабінеті не знайдено відправників.', choices, 1, 1);
+    setFlow(msg, flow);
+    await sendText(msg.chat.id, 'Створіть відправника в кабінеті Нової пошти й натисніть "Оновити список".', pagedChoiceOptions(flow));
+    return;
+  }
+
+  if (senders.length === 1 && flow.senderDefaultOffered) {
     flow.data[field.key] = senders[0].value;
     flow.data[`${field.key}Description`] = senders[0].description;
     flow.step += 1;
@@ -1616,16 +1862,50 @@ async function offerSenderChoices(msg, flow, field, page) {
 
   flow.mode = 'senderChoice';
   flow.pendingField = field.key;
-  setPagedChoiceState(flow, field.prompt, senders, 1, page);
+  setPagedChoiceState(flow, field.prompt, addSenderActionChoices(senders), 1, page);
   setFlow(msg, flow);
 
   await sendPagedChoiceList(msg, flow);
+}
+
+async function offerSavedSenderChoices(msg, flow, field) {
+  const senders = getDefaultSenders(msg, flow.data.apiKeyAlias);
+
+  if (!senders.length) {
+    flow.senderDefaultOffered = true;
+    return false;
+  }
+
+  const choices = senders.map((sender) => ({
+    label: trimButtonLabel(sender.name),
+    value: sender.id,
+    description: sender.name,
+    sender,
+  }));
+
+  choices.push({
+    label: BUTTONS.customSender,
+    value: BUTTONS.customSender,
+    description: BUTTONS.customSender,
+  });
+
+  flow.mode = 'savedSenderChoice';
+  flow.pendingField = field.key;
+  flow.pendingChoices = choices;
+  setFlow(msg, flow);
+
+  await sendText(msg.chat.id, 'Хто відправляє?', listChoiceOptions(choices, 1));
+  return true;
 }
 
 async function handleCreateTtnSenderChoice(msg, flow, text) {
   if (handleLocalChoicePageChange(flow, text)) {
     setFlow(msg, flow);
     await sendPagedChoiceList(msg, flow);
+    return;
+  }
+
+  if (await handleSenderActionChoice(msg, flow, text, () => offerSenderChoices(msg, flow, getCreateTtnFieldByKey(flow.pendingField), 1))) {
     return;
   }
 
@@ -1647,6 +1927,32 @@ async function handleCreateTtnSenderChoice(msg, flow, text) {
   await askNextCreateTtnField(msg, flow);
 }
 
+async function handleCreateTtnSavedSenderChoice(msg, flow, text) {
+  const choice = findChoiceByText(flow.pendingChoices || [], text);
+
+  if (!choice) {
+    await sendText(msg.chat.id, 'Натисніть відправника зі списку нижче.', listChoiceOptions(flow.pendingChoices || [], 1));
+    return;
+  }
+
+  const field = getCreateTtnFieldByKey(flow.pendingField);
+  delete flow.mode;
+  delete flow.pendingField;
+  clearPagedChoiceState(flow);
+
+  if (choice.value === BUTTONS.customSender) {
+    flow.senderDefaultOffered = true;
+    await offerSenderChoices(msg, flow, field, 1);
+    return;
+  }
+
+  applyDefaultSender(flow, choice.sender);
+  flow.step = getCreateTtnFieldIndex('ContactSender') + 1;
+
+  await sendText(msg.chat.id, `Відправник: ${choice.sender.name}`);
+  await askNextCreateTtnField(msg, flow);
+}
+
 async function offerSenderContactChoices(msg, flow, field, page) {
   const key = getApiKeyForCreateFlow(flow);
   const senderRef = flow.data[field.senderKey];
@@ -1656,19 +1962,7 @@ async function offerSenderContactChoices(msg, flow, field, page) {
     return;
   }
 
-  const response = await callNovaPost(key.apiKey, 'Counterparty', 'getCounterpartyContactPersons', {
-    Ref: senderRef,
-    Page: '1',
-  });
-  const contacts = response.data.map((contact) => {
-    return {
-      label: trimButtonLabel(formatContactButtonLabel(contact)),
-      value: contact.Ref,
-      description: contact.Description,
-      phone: firstPhone(contact.Phones),
-      search: `${contact.Description} ${contact.Phones || ''}`,
-    };
-  });
+  const contacts = await fetchSenderContactChoices(key.apiKey, senderRef);
 
   if (!contacts.length) {
     await sendText(msg.chat.id, 'Для цього відправника не знайдено контактних осіб.', listChoiceOptions([]));
@@ -1898,6 +2192,30 @@ function getDefaultSenderWarehouses(msg, alias) {
   });
 }
 
+function getDefaultSenders(msg, alias) {
+  const user = assertLoggedIn(msg);
+  const store = readStore();
+  const userSenders = store.defaultSenders && store.defaultSenders[user.login]
+    ? store.defaultSenders[user.login]
+    : {};
+  const senders = userSenders[normalizeAlias(alias)] || [];
+
+  return senders.filter((sender) => {
+    return sender.senderRef && sender.contactRef;
+  });
+}
+
+function applyDefaultSender(flow, sender) {
+  flow.data.Sender = sender.senderRef;
+  flow.data.SenderDescription = sender.senderDescription;
+  flow.data.ContactSender = sender.contactRef;
+  flow.data.ContactSenderDescription = sender.contactDescription;
+
+  if (sender.phone) {
+    flow.data.SendersPhone = sender.phone;
+  }
+}
+
 function applyDefaultSenderWarehouse(flow, warehouse) {
   flow.data.AreaSender = warehouse.areaRef;
   flow.data.AreaSenderDescription = warehouse.areaDescription;
@@ -1922,6 +2240,117 @@ function formatDefaultSenderWarehouseButtonLabel(warehouse) {
   }
 
   return `${warehouse.name}: ${details}`;
+}
+
+function formatSavedSenderLabel(data) {
+  const sender = data.SenderDescription || 'Відправник';
+  const contact = data.ContactSenderDescription || '';
+  const phone = data.SendersPhone || '';
+  return [sender, contact, phone].filter(Boolean).join(': ');
+}
+
+function addSenderActionChoices(senders) {
+  return senders.concat([
+    {
+      label: BUTTONS.createSender,
+      value: BUTTONS.createSender,
+      description: BUTTONS.createSender,
+    },
+    {
+      label: BUTTONS.refreshList,
+      value: BUTTONS.refreshList,
+      description: BUTTONS.refreshList,
+    },
+  ]);
+}
+
+async function handleSenderActionChoice(msg, flow, text, refreshCallback) {
+  if (text === BUTTONS.refreshList) {
+    clearPagedChoiceState(flow);
+    await refreshCallback();
+    return true;
+  }
+
+  if (text === BUTTONS.createSender) {
+    await sendText(
+      msg.chat.id,
+      [
+        'Нового відправника потрібно створити в кабінеті Нової пошти для цього API-ключа.',
+        'Після створення поверніться сюди й натисніть "Оновити список".',
+      ].join('\n'),
+      pagedChoiceOptions(flow)
+    );
+    return true;
+  }
+
+  return false;
+}
+
+async function fetchSenderChoices(apiKey) {
+  const senders = [];
+
+  for (let page = 1; page <= 20; page += 1) {
+    const response = await callNovaPost(apiKey, 'Counterparty', 'getCounterparties', {
+      CounterpartyProperty: 'Sender',
+      Page: String(page),
+    });
+    const pageItems = (response.data || []).map((counterparty) => ({
+      label: trimButtonLabel(formatCounterpartyButtonLabel(counterparty)),
+      value: counterparty.Ref,
+      description: counterparty.Description,
+      search: counterparty.Description,
+    }));
+
+    senders.push(...pageItems);
+
+    if (!pageItems.length) {
+      break;
+    }
+  }
+
+  return uniqueChoicesByValue(senders);
+}
+
+async function fetchSenderContactChoices(apiKey, senderRef) {
+  const contacts = [];
+
+  for (let page = 1; page <= 20; page += 1) {
+    const response = await callNovaPost(apiKey, 'Counterparty', 'getCounterpartyContactPersons', {
+      Ref: senderRef,
+      Page: String(page),
+    });
+    const pageItems = (response.data || []).map((contact) => ({
+      label: trimButtonLabel(formatContactButtonLabel(contact)),
+      value: contact.Ref,
+      description: contact.Description,
+      phone: firstPhone(contact.Phones),
+      search: `${contact.Description} ${contact.Phones || ''}`,
+    }));
+
+    contacts.push(...pageItems);
+
+    if (!pageItems.length) {
+      break;
+    }
+  }
+
+  return uniqueChoicesByValue(contacts);
+}
+
+function uniqueChoicesByValue(choices) {
+  const seen = new Set();
+  const result = [];
+
+  for (const choice of choices) {
+    if (!choice.value || seen.has(choice.value)) {
+      continue;
+    }
+
+    seen.add(choice.value);
+    result.push(choice);
+  }
+
+  return result;
 }
 
 function sortCitiesByAreaMainCity(cities, areaDescription) {
@@ -2945,6 +3374,7 @@ function menuKeyboard(msg) {
   const keyboard = [
     [BUTTONS.createTtn, BUTTONS.track],
     [BUTTONS.keys, BUTTONS.addKey],
+    [BUTTONS.addDefaultSender],
     [BUTTONS.addDefaultWarehouse],
     [BUTTONS.clearChat, BUTTONS.logout],
   ];

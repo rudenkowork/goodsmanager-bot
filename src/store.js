@@ -23,6 +23,7 @@ function ensureStoreFile(config) {
     sessions: {},
     apiKeys: {},
     selectedApiKeyByUser: {},
+    defaultSenders: {},
     defaultSenderWarehouses: {},
     shipments: {},
     flows: {},
@@ -56,6 +57,10 @@ function readStore() {
 
   if (!store.selectedApiKeyByUser) {
     store.selectedApiKeyByUser = {};
+  }
+
+  if (!store.defaultSenders) {
+    store.defaultSenders = {};
   }
 
   if (!store.defaultSenderWarehouses) {

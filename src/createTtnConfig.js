@@ -40,6 +40,7 @@ const BUTTONS = {
   track: 'Відстежити посилку',
   keys: 'Кабінети НП',
   addKey: 'Додати кабінет',
+  addDefaultSender: 'Додати стандартного відправника',
   addDefaultWarehouse: 'Додати стандартне відділення',
   cities: 'Знайти місто',
   warehouses: 'Знайти відділення',
@@ -53,7 +54,10 @@ const BUTTONS = {
   nextPage: 'Наступна сторінка',
   previousPage: 'Попередня сторінка',
   skip: 'Пропустити',
+  customSender: 'Інший відправник',
   customSenderWarehouse: 'Інше відділення',
+  createSender: 'Створити нового відправника',
+  refreshList: 'Оновити список',
 };
 
 const SETTLEMENT_TYPE_CHOICES = [

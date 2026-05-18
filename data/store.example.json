@@ -7,6 +7,7 @@
   "sessions": {},
   "apiKeys": {},
   "selectedApiKeyByUser": {},
+  "defaultSenders": {},
   "defaultSenderWarehouses": {},
   "shipments": {},
   "flows": {},
