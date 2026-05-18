@@ -43,6 +43,7 @@ Do not put low-level API clients, JSON-store plumbing, password hashing, or gene
 
 - `data/store.json` creation, reading, and writing.
 - Active flow get/set/clear.
+- Saved default sender branches per local user and Nova Poshta cabinet.
 - Railway Volume support through `STORE_PATH` or `RAILWAY_VOLUME_MOUNT_PATH`.
 
 `src/textUtils.js`
@@ -67,7 +68,10 @@ Current sender flow:
 2. Choose sender counterparty: FOP/company from Nova Poshta API.
 3. Choose sender contact person.
 4. Use contact phone automatically when Nova Poshta returns it.
-5. Choose sender area, settlement type, settlement, and enter branch number. Sender postomat is not offered.
+5. If the user saved default sender branches, choose one by name or select another branch.
+6. If no default branch is used, choose sender area, settlement type, settlement, and enter branch number. Sender postomat is not offered.
+
+The bot skips the cabinet, sender, or contact choice when there is only one valid option. Seats amount and delivery payer are not asked in chat; TTN creation uses defaults in `buildTtnProperties`.
 
 Current recipient address flow:
 

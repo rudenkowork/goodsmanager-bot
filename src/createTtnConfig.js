@@ -40,6 +40,7 @@ const BUTTONS = {
   track: 'Відстежити посилку',
   keys: 'Кабінети НП',
   addKey: 'Додати кабінет',
+  addDefaultWarehouse: 'Додати стандартне відділення',
   cities: 'Знайти місто',
   warehouses: 'Знайти відділення',
   addUser: 'Додати користувача',
@@ -52,6 +53,7 @@ const BUTTONS = {
   nextPage: 'Наступна сторінка',
   previousPage: 'Попередня сторінка',
   skip: 'Пропустити',
+  customSenderWarehouse: 'Інше відділення',
 };
 
 const SETTLEMENT_TYPE_CHOICES = [
@@ -100,19 +102,13 @@ const CREATE_TTN_FIELDS = [
     format: 'money',
   },
   {
-    key: 'SeatsAmount',
-    prompt: 'Скільки місць у відправленні? Наприклад: 1 коробка або 2 пакети.',
-    defaultValue: '1',
-    format: 'integer',
-  },
-  {
     key: 'Sender',
     prompt: 'Оберіть ФОП або компанію, з якої відправляємо.',
     senderCounterparty: true,
   },
   {
     key: 'ContactSender',
-    prompt: 'Оберіть контактну особу відправника.',
+    prompt: 'Оберіть ПІБ і телефон відправника з кабінету.',
     senderContact: true,
     senderKey: 'Sender',
   },
@@ -166,20 +162,6 @@ const CREATE_TTN_FIELDS = [
     key: 'RecipientsPhone',
     prompt: 'Введіть телефон отримувача у форматі 380XXXXXXXXX.',
     format: 'phone',
-  },
-  {
-    key: 'PayerType',
-    prompt: 'Хто оплачує доставку?',
-    options: [
-      {
-        label: 'Відправник',
-        value: 'Sender',
-      },
-      {
-        label: 'Отримувач',
-        value: 'Recipient',
-      },
-    ],
   },
 ];
 

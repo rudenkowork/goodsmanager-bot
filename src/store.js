@@ -23,6 +23,7 @@ function ensureStoreFile(config) {
     sessions: {},
     apiKeys: {},
     selectedApiKeyByUser: {},
+    defaultSenderWarehouses: {},
     shipments: {},
     flows: {},
     botMessagesByChat: {},
@@ -55,6 +56,10 @@ function readStore() {
 
   if (!store.selectedApiKeyByUser) {
     store.selectedApiKeyByUser = {};
+  }
+
+  if (!store.defaultSenderWarehouses) {
+    store.defaultSenderWarehouses = {};
   }
 
   if (!store.shipments) {

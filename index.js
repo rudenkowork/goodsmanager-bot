@@ -76,6 +76,31 @@ ensureStoreFile({
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 const startedAt = new Date();
+const DEFAULT_SENDER_WAREHOUSE_FIELDS = [
+  {
+    key: 'AreaSender',
+    prompt: 'Оберіть область стандартного відділення.',
+    areaRef: true,
+  },
+  {
+    key: 'CitySender',
+    prompt: 'Оберіть населений пункт стандартного відділення.',
+    cityRef: true,
+    areaKey: 'AreaSender',
+  },
+  {
+    key: 'SenderAddress',
+    prompt: 'Введіть номер відділення, з якого зазвичай відправляєте.',
+    warehouseRef: true,
+    cityKey: 'CitySender',
+    fixedDeliveryType: 'branch',
+    fixedDeliveryTypeLabel: 'Відділення',
+  },
+  {
+    key: 'name',
+    prompt: 'Назвіть це відділення для кнопки. Наприклад: Склад Київ.',
+  },
+];
 
 bot.setMyCommands([
   { command: 'start', description: 'Відкрити головне меню' },
@@ -234,6 +259,11 @@ async function handleMessage(msg) {
     return;
   }
 
+  if (command === '/add_default_warehouse') {
+    await startDefaultSenderWarehouseFlow(msg);
+    return;
+  }
+
   if (command === '/delkey') {
     await handleDeleteKey(msg, args);
     return;
@@ -315,6 +345,7 @@ async function sendHelp(msg) {
     `${BUTTONS.createTtn} - проведу крок за кроком і створю накладну.`,
     `${BUTTONS.track} - перевірю статус посилки за номером ТТН.`,
     `${BUTTONS.addKey} - збережемо API-ключ із кабінету Нової пошти.`,
+    `${BUTTONS.addDefaultWarehouse} - збережемо відділення відправника для швидких ТТН.`,
     `${BUTTONS.keys} - покажу збережені кабінети.`,
     `${BUTTONS.clearChat} - приберу останні повідомлення бота з чату.`,
   ];
@@ -367,6 +398,11 @@ async function handleMenuButton(msg, text) {
 
   if (text === BUTTONS.addKey) {
     await startAddKeyFlow(msg);
+    return;
+  }
+
+  if (text === BUTTONS.addDefaultWarehouse) {
+    await startDefaultSenderWarehouseFlow(msg);
     return;
   }
 
@@ -477,6 +513,43 @@ async function startAddKeyFlow(msg) {
   );
 }
 
+async function startDefaultSenderWarehouseFlow(msg) {
+  assertLoggedIn(msg);
+  const store = readStore();
+  const aliases = getAvailableApiKeyAliases(msg, store);
+
+  if (!aliases.length) {
+    await sendText(
+      msg.chat.id,
+      'Спочатку додайте кабінет Нової пошти, а потім збережемо стандартне відділення.',
+      menuOptions(msg)
+    );
+    return;
+  }
+
+  const flow = {
+    type: 'defaultSenderWarehouse',
+    step: -1,
+    data: {},
+  };
+
+  if (aliases.length === 1) {
+    flow.data.apiKeyAlias = aliases[0];
+    flow.step = 0;
+    setFlow(msg, flow);
+    await sendText(msg.chat.id, `Кабінет: ${aliases[0]}`);
+    await askNextDefaultSenderWarehouseField(msg, flow);
+    return;
+  }
+
+  setFlow(msg, flow);
+  await sendText(
+    msg.chat.id,
+    'Для якого кабінету зберегти стандартне відділення?',
+    keyboardOptions(makeButtonRows(aliases, 2, true))
+  );
+}
+
 async function startTrackFlow(msg) {
   assertLoggedIn(msg);
 
@@ -527,18 +600,36 @@ async function startCreateTtnFlow(msg) {
     return;
   }
 
-  setFlow(msg, {
+  const flow = {
     type: 'createTtn',
     step: -1,
     data: {},
-  });
+  };
+
+  if (aliases.length === 1) {
+    flow.data.apiKeyAlias = aliases[0];
+    flow.step = 0;
+    setFlow(msg, flow);
+    await sendText(
+      msg.chat.id,
+      [
+        'Починаємо створення ТТН 📦',
+        `Кабінет: ${aliases[0]}`,
+        'Заповнимо тільки необхідне.',
+      ].join('\n')
+    );
+    await askNextCreateTtnField(msg, flow);
+    return;
+  }
+
+  setFlow(msg, flow);
 
   await sendText(
     msg.chat.id,
     [
       'Починаємо створення ТТН 📦',
       'Спочатку оберіть кабінет Нової пошти, з якого будемо створювати накладну.',
-      'Далі коротко заповнимо дані посилки, потім окремо дані відправника й отримувача.',
+      'Далі заповнимо тільки необхідне.',
       '',
       'Натисніть потрібний кабінет зі списку нижче.',
     ].join('\n'),
@@ -559,6 +650,11 @@ async function handleFlowInput(msg, flow, text) {
 
   if (flow.type === 'addKey') {
     await handleAddKeyFlowInput(msg, flow, text);
+    return;
+  }
+
+  if (flow.type === 'defaultSenderWarehouse') {
+    await handleDefaultSenderWarehouseFlowInput(msg, flow, text);
     return;
   }
 
@@ -588,6 +684,11 @@ async function handleFlowInput(msg, flow, text) {
 }
 
 async function handleFlowBack(msg, flow) {
+  if (flow.type === 'defaultSenderWarehouse') {
+    await handleDefaultSenderWarehouseBack(msg, flow);
+    return;
+  }
+
   if (flow.type !== 'createTtn') {
     clearFlow(msg);
     await sendText(msg.chat.id, 'Повертаю Вас у головне меню.', menuOptions(msg));
@@ -647,6 +748,42 @@ async function handleFlowBack(msg, flow) {
 
   removeCreateFlowValue(flow, CREATE_TTN_FIELDS[flow.step]);
   await askNextCreateTtnField(msg, flow);
+}
+
+async function handleDefaultSenderWarehouseBack(msg, flow) {
+  if (flow.step <= 0) {
+    clearFlow(msg);
+    await sendText(msg.chat.id, 'Повертаю Вас у головне меню.', menuOptions(msg));
+    return;
+  }
+
+  if (flow.mode === 'cityChoice') {
+    const field = getDefaultSenderWarehouseFieldByKey(flow.pendingField);
+    delete flow.mode;
+    delete flow.pendingField;
+    clearPagedChoiceState(flow);
+    delete flow.data[`${field.key}SettlementType`];
+    delete flow.data[`${field.key}SettlementTypeLabel`];
+    await offerSettlementTypeChoices(msg, flow, field);
+    return;
+  }
+
+  if (flow.mode === 'warehouseNumber') {
+    delete flow.mode;
+    delete flow.pendingField;
+    delete flow.pendingWarehouseMode;
+    clearPagedChoiceState(flow);
+  }
+
+  if (flow.mode) {
+    delete flow.mode;
+    delete flow.pendingField;
+    clearPagedChoiceState(flow);
+  }
+
+  flow.step -= 1;
+  removeDefaultSenderWarehouseValue(flow, DEFAULT_SENDER_WAREHOUSE_FIELDS[flow.step]);
+  await askNextDefaultSenderWarehouseField(msg, flow);
 }
 
 async function handleLoginFlowInput(msg, flow, text) {
@@ -738,12 +875,245 @@ async function handleAddKeyFlowInput(msg, flow, text) {
     createdBy: user.login,
     createdAt: new Date().toISOString(),
   };
+  store.selectedApiKeyByUser[user.login] = alias;
   delete store.flows[String(msg.from.id)];
   writeStore(store);
 
   await sendText(
     msg.chat.id,
-    `Готово, кабінет "${alias}" збережено. При створенні ТТН я запропоную обрати його зі списку.`,
+    `Готово, кабінет "${alias}" збережено. Якщо це єдиний кабінет, я використаю його для ТТН автоматично.`,
+    menuOptions(msg)
+  );
+}
+
+async function handleDefaultSenderWarehouseFlowInput(msg, flow, text) {
+  if (flow.step === -1) {
+    await handleDefaultSenderWarehouseKeySelection(msg, flow, text);
+    return;
+  }
+
+  if (flow.mode === 'areaChoice') {
+    await handleDefaultSenderWarehouseAreaChoice(msg, flow, text);
+    return;
+  }
+
+  if (flow.mode === 'settlementTypeChoice') {
+    await handleDefaultSenderWarehouseSettlementTypeChoice(msg, flow, text);
+    return;
+  }
+
+  if (flow.mode === 'cityChoice') {
+    await handleDefaultSenderWarehouseCityChoice(msg, flow, text);
+    return;
+  }
+
+  if (flow.mode === 'warehouseNumber') {
+    await handleDefaultSenderWarehouseChoice(msg, flow, text);
+    return;
+  }
+
+  const field = DEFAULT_SENDER_WAREHOUSE_FIELDS[flow.step];
+  const value = text.trim();
+
+  if (!value) {
+    await sendText(msg.chat.id, 'Введіть назву, будь ласка.', textInputOptions());
+    return;
+  }
+
+  flow.data[field.key] = value;
+  await saveDefaultSenderWarehouse(msg, flow.data);
+}
+
+async function handleDefaultSenderWarehouseKeySelection(msg, flow, text) {
+  const alias = normalizeAlias(text);
+  const store = readStore();
+  const aliases = getAvailableApiKeyAliases(msg, store);
+
+  if (!store.apiKeys[alias] || !aliases.includes(alias)) {
+    await sendText(msg.chat.id, 'Не бачу такого кабінету. Натисніть один із варіантів нижче.', keyboardOptions(makeButtonRows(aliases, 2, true)));
+    return;
+  }
+
+  flow.data.apiKeyAlias = alias;
+  flow.step = 0;
+  setFlow(msg, flow);
+  await askNextDefaultSenderWarehouseField(msg, flow);
+}
+
+async function handleDefaultSenderWarehouseAreaChoice(msg, flow, text) {
+  if (handleLocalChoicePageChange(flow, text)) {
+    setFlow(msg, flow);
+    await sendPagedChoiceList(msg, flow);
+    return;
+  }
+
+  const choice = findChoiceByText(getCurrentPageChoices(flow), text);
+
+  if (!choice) {
+    setFlow(msg, flow);
+    await sendText(msg.chat.id, 'Натисніть область зі списку нижче.', pagedChoiceOptions(flow));
+    return;
+  }
+
+  flow.data[flow.pendingField] = choice.value;
+  flow.data[`${flow.pendingField}Description`] = choice.description;
+  flow.step += 1;
+  delete flow.mode;
+  delete flow.pendingField;
+  clearPagedChoiceState(flow);
+
+  await askNextDefaultSenderWarehouseField(msg, flow);
+}
+
+async function handleDefaultSenderWarehouseSettlementTypeChoice(msg, flow, text) {
+  const choice = findChoiceByText(SETTLEMENT_TYPE_CHOICES, text);
+
+  if (!choice) {
+    await sendText(msg.chat.id, 'Натисніть тип населеного пункту зі списку нижче.', listChoiceOptions(SETTLEMENT_TYPE_CHOICES, 2));
+    return;
+  }
+
+  const field = getDefaultSenderWarehouseFieldByKey(flow.pendingField);
+  flow.data[`${field.key}SettlementType`] = choice.value;
+  flow.data[`${field.key}SettlementTypeLabel`] = choice.label;
+  delete flow.mode;
+  delete flow.pendingField;
+  clearPagedChoiceState(flow);
+
+  await offerCityChoices(msg, flow, field, 1);
+}
+
+async function handleDefaultSenderWarehouseCityChoice(msg, flow, text) {
+  if (handleLocalChoicePageChange(flow, text)) {
+    setFlow(msg, flow);
+    await sendPagedChoiceList(msg, flow);
+    return;
+  }
+
+  const choice = findChoiceByText(getCurrentPageChoices(flow), text);
+
+  if (!choice) {
+    setFlow(msg, flow);
+    await sendText(msg.chat.id, 'Натисніть населений пункт зі списку нижче.', pagedChoiceOptions(flow));
+    return;
+  }
+
+  flow.data[flow.pendingField] = choice.value;
+  flow.data[`${flow.pendingField}Description`] = choice.description;
+  flow.step += 1;
+  delete flow.mode;
+  delete flow.pendingField;
+  clearPagedChoiceState(flow);
+
+  await askNextDefaultSenderWarehouseField(msg, flow);
+}
+
+async function handleDefaultSenderWarehouseChoice(msg, flow, text) {
+  const field = getDefaultSenderWarehouseFieldByKey(flow.pendingField);
+  const warehouseNumber = normalizeWarehouseNumberInput(text);
+
+  if (!warehouseNumber) {
+    setFlow(msg, flow);
+    await sendText(msg.chat.id, 'Номер виглядає некоректно. Введіть коректний номер, будь ласка.', textInputOptions());
+    return;
+  }
+
+  const key = getApiKeyForCreateFlow(flow);
+  const warehouse = await findWarehouseByNumber(key.apiKey, flow.data[field.cityKey], 'branch', warehouseNumber);
+
+  if (!warehouse) {
+    setFlow(msg, flow);
+    await sendText(msg.chat.id, 'Не знайшов таке відділення. Перевірте номер і введіть його ще раз.', textInputOptions());
+    return;
+  }
+
+  flow.data[flow.pendingField] = warehouse.Ref;
+  flow.data[`${flow.pendingField}Number`] = warehouse.Number || warehouseNumber;
+  flow.data[`${flow.pendingField}Description`] = warehouse.Description;
+  flow.data[`${flow.pendingField}Ref`] = warehouse.Ref;
+  flow.data[`${flow.pendingField}DeliveryType`] = 'branch';
+  flow.data[`${flow.pendingField}DeliveryTypeLabel`] = 'Відділення';
+  flow.step += 1;
+  delete flow.mode;
+  delete flow.pendingField;
+  delete flow.pendingWarehouseMode;
+  clearPagedChoiceState(flow);
+
+  await sendText(msg.chat.id, formatWarehouseConfirmation(flow, field, warehouse), textInputOptions());
+  await askNextDefaultSenderWarehouseField(msg, flow);
+}
+
+async function askNextDefaultSenderWarehouseField(msg, flow) {
+  const field = DEFAULT_SENDER_WAREHOUSE_FIELDS[flow.step];
+
+  if (!field) {
+    await saveDefaultSenderWarehouse(msg, flow.data);
+    return;
+  }
+
+  setFlow(msg, flow);
+
+  if (field.areaRef) {
+    await offerAreaChoices(msg, flow, field, 1);
+    return;
+  }
+
+  if (field.cityRef) {
+    await offerSettlementTypeChoices(msg, flow, field);
+    return;
+  }
+
+  if (field.warehouseRef) {
+    await offerWarehouseStep(msg, flow, field);
+    return;
+  }
+
+  await sendText(msg.chat.id, field.prompt, textInputOptions());
+}
+
+async function saveDefaultSenderWarehouse(msg, data) {
+  const user = assertLoggedIn(msg);
+  const store = readStore();
+  const alias = normalizeAlias(data.apiKeyAlias);
+  const warehouse = {
+    id: `${Date.now()}`,
+    name: trimButtonLabel(data.name || `Відділення №${data.SenderAddressNumber || ''}`),
+    areaRef: data.AreaSender,
+    areaDescription: data.AreaSenderDescription,
+    cityRef: data.CitySender,
+    cityDescription: data.CitySenderDescription,
+    settlementType: data.CitySenderSettlementType,
+    settlementTypeLabel: data.CitySenderSettlementTypeLabel,
+    warehouseRef: data.SenderAddressRef || data.SenderAddress,
+    warehouseNumber: data.SenderAddressNumber || '',
+    warehouseDescription: data.SenderAddressDescription,
+    createdAt: new Date().toISOString(),
+  };
+
+  if (!store.defaultSenderWarehouses) {
+    store.defaultSenderWarehouses = {};
+  }
+
+  if (!store.defaultSenderWarehouses[user.login]) {
+    store.defaultSenderWarehouses[user.login] = {};
+  }
+
+  if (!store.defaultSenderWarehouses[user.login][alias]) {
+    store.defaultSenderWarehouses[user.login][alias] = [];
+  }
+
+  store.defaultSenderWarehouses[user.login][alias].push(warehouse);
+  delete store.flows[String(msg.from.id)];
+  writeStore(store);
+
+  await sendText(
+    msg.chat.id,
+    [
+      'Готово, стандартне відділення збережено ✅',
+      `${warehouse.name}: ${warehouse.warehouseDescription}`,
+      '',
+      'Під час створення ТТН воно буде кнопкою у виборі відправника.',
+    ].join('\n'),
     menuOptions(msg)
   );
 }
@@ -812,6 +1182,11 @@ async function handleCreateTtnFlowInput(msg, flow, text) {
 
   if (flow.mode === 'warehouseNumber') {
     await handleCreateTtnWarehouseChoice(msg, flow, text);
+    return;
+  }
+
+  if (flow.mode === 'senderWarehouseDefaultChoice') {
+    await handleCreateTtnSenderWarehouseDefaultChoice(msg, flow, text);
     return;
   }
 
@@ -1152,6 +1527,64 @@ async function handleCreateTtnWarehouseChoice(msg, flow, text) {
   await askNextCreateTtnField(msg, flow);
 }
 
+async function offerSenderWarehouseDefaults(msg, flow, field) {
+  const defaults = getDefaultSenderWarehouses(msg, flow.data.apiKeyAlias);
+
+  if (!defaults.length) {
+    return false;
+  }
+
+  const choices = defaults.map((warehouse) => ({
+    label: trimButtonLabel(formatDefaultSenderWarehouseButtonLabel(warehouse)),
+    value: warehouse.id,
+    description: warehouse.name,
+    warehouse,
+  }));
+
+  choices.push({
+    label: BUTTONS.customSenderWarehouse,
+    value: BUTTONS.customSenderWarehouse,
+    description: BUTTONS.customSenderWarehouse,
+  });
+
+  flow.mode = 'senderWarehouseDefaultChoice';
+  flow.pendingField = field.key;
+  flow.pendingChoices = choices;
+  setFlow(msg, flow);
+
+  await sendText(
+    msg.chat.id,
+    'Звідки відправляємо?',
+    listChoiceOptions(choices, 1)
+  );
+  return true;
+}
+
+async function handleCreateTtnSenderWarehouseDefaultChoice(msg, flow, text) {
+  const choice = findChoiceByText(flow.pendingChoices || [], text);
+
+  if (!choice) {
+    await sendText(msg.chat.id, 'Натисніть відділення зі списку нижче.', listChoiceOptions(flow.pendingChoices || [], 1));
+    return;
+  }
+
+  const field = getCreateTtnFieldByKey(flow.pendingField);
+  delete flow.mode;
+  delete flow.pendingField;
+  clearPagedChoiceState(flow);
+
+  if (choice.value === BUTTONS.customSenderWarehouse) {
+    await offerAreaChoices(msg, flow, field, 1);
+    return;
+  }
+
+  applyDefaultSenderWarehouse(flow, choice.warehouse);
+  flow.step = getCreateTtnFieldIndex('SenderAddress') + 1;
+
+  await sendText(msg.chat.id, `Обрано стандартне відділення: ${choice.warehouse.name}`);
+  await askNextCreateTtnField(msg, flow);
+}
+
 async function offerSenderChoices(msg, flow, field, page) {
   const key = getApiKeyForCreateFlow(flow);
   const response = await callNovaPost(key.apiKey, 'Counterparty', 'getCounterparties', {
@@ -1169,6 +1602,15 @@ async function offerSenderChoices(msg, flow, field, page) {
 
   if (!senders.length) {
     await sendText(msg.chat.id, 'У цьому кабінеті не знайдено ФОП або компанію відправника.', listChoiceOptions([]));
+    return;
+  }
+
+  if (senders.length === 1) {
+    flow.data[field.key] = senders[0].value;
+    flow.data[`${field.key}Description`] = senders[0].description;
+    flow.step += 1;
+    await sendText(msg.chat.id, `Відправник: ${senders[0].description}`);
+    await askNextCreateTtnField(msg, flow);
     return;
   }
 
@@ -1233,6 +1675,20 @@ async function offerSenderContactChoices(msg, flow, field, page) {
     return;
   }
 
+  if (contacts.length === 1) {
+    flow.data[field.key] = contacts[0].value;
+    flow.data[`${field.key}Description`] = contacts[0].description;
+
+    if (contacts[0].phone) {
+      flow.data.SendersPhone = contacts[0].phone;
+    }
+
+    flow.step += 1;
+    await sendText(msg.chat.id, `Контакт відправника: ${contacts[0].label}`);
+    await askNextCreateTtnField(msg, flow);
+    return;
+  }
+
   flow.mode = 'senderContactChoice';
   flow.pendingField = field.key;
   setPagedChoiceState(flow, field.prompt, contacts, 1, page);
@@ -1282,6 +1738,10 @@ async function askNextCreateTtnField(msg, flow) {
     const nextField = CREATE_TTN_FIELDS[flow.step];
     await sendCreateTtnSectionNotice(msg, flow, nextField);
     setFlow(msg, flow);
+
+    if (nextField.key === 'AreaSender' && await offerSenderWarehouseDefaults(msg, flow, nextField)) {
+      return;
+    }
 
     if (nextField.areaRef) {
       await offerAreaChoices(msg, flow, nextField, 1);
@@ -1403,6 +1863,65 @@ function getCreateTtnFieldByKey(key) {
   }
 
   return field;
+}
+
+function getDefaultSenderWarehouseFieldByKey(key) {
+  const field = DEFAULT_SENDER_WAREHOUSE_FIELDS.find((item) => item.key === key);
+
+  if (!field) {
+    throw new Error('Не вдалося визначити крок стандартного відділення. Почніть ще раз.');
+  }
+
+  return field;
+}
+
+function getCreateTtnFieldIndex(key) {
+  const index = CREATE_TTN_FIELDS.findIndex((item) => item.key === key);
+
+  if (index < 0) {
+    throw new Error('Не вдалося визначити крок створення ТТН. Почніть створення ще раз.');
+  }
+
+  return index;
+}
+
+function getDefaultSenderWarehouses(msg, alias) {
+  const user = assertLoggedIn(msg);
+  const store = readStore();
+  const userWarehouses = store.defaultSenderWarehouses && store.defaultSenderWarehouses[user.login]
+    ? store.defaultSenderWarehouses[user.login]
+    : {};
+  const warehouses = userWarehouses[normalizeAlias(alias)] || [];
+
+  return warehouses.filter((warehouse) => {
+    return warehouse.cityRef && warehouse.warehouseRef;
+  });
+}
+
+function applyDefaultSenderWarehouse(flow, warehouse) {
+  flow.data.AreaSender = warehouse.areaRef;
+  flow.data.AreaSenderDescription = warehouse.areaDescription;
+  flow.data.CitySender = warehouse.cityRef;
+  flow.data.CitySenderDescription = warehouse.cityDescription;
+  flow.data.CitySenderSettlementType = warehouse.settlementType;
+  flow.data.CitySenderSettlementTypeLabel = warehouse.settlementTypeLabel;
+  flow.data.SenderAddress = warehouse.warehouseRef;
+  flow.data.SenderAddressRef = warehouse.warehouseRef;
+  flow.data.SenderAddressDescription = warehouse.warehouseDescription;
+  flow.data.SenderAddressDeliveryType = 'branch';
+  flow.data.SenderAddressDeliveryTypeLabel = 'Відділення';
+}
+
+function formatDefaultSenderWarehouseButtonLabel(warehouse) {
+  const number = warehouse.warehouseNumber ? `№${warehouse.warehouseNumber}` : '';
+  const city = warehouse.cityDescription || '';
+  const details = [city, number].filter(Boolean).join(', ');
+
+  if (!details) {
+    return warehouse.name;
+  }
+
+  return `${warehouse.name}: ${details}`;
 }
 
 function sortCitiesByAreaMainCity(cities, areaDescription) {
@@ -1744,18 +2263,22 @@ function removeCreateFlowValue(flow, field) {
   delete flow.data[`${field.key}DeliveryTypeLabel`];
 }
 
+function removeDefaultSenderWarehouseValue(flow, field) {
+  delete flow.data[field.key];
+  delete flow.data[`${field.key}Description`];
+  delete flow.data[`${field.key}Ref`];
+  delete flow.data[`${field.key}Number`];
+  delete flow.data[`${field.key}SettlementType`];
+  delete flow.data[`${field.key}SettlementTypeLabel`];
+  delete flow.data[`${field.key}DeliveryType`];
+  delete flow.data[`${field.key}DeliveryTypeLabel`];
+}
+
 async function finishCreateTtnFlow(msg, data) {
   const key = getApiKeyForCreateFlow({ data });
   const methodProperties = await buildTtnProperties(key.apiKey, data);
 
-  await sendText(
-    msg.chat.id,
-    [
-      'Дані зібрано ✅',
-      'Створюю ТТН з таким JSON:',
-      JSON.stringify(methodProperties, null, 2),
-    ].join('\n')
-  );
+  await sendText(msg.chat.id, 'Дані зібрано ✅ Створюю ТТН.');
 
   await createTtnFromProperties(msg, methodProperties, key);
 }
@@ -2003,6 +2526,7 @@ async function handleAddKey(msg, args) {
     createdBy: currentUser.login,
     createdAt: new Date().toISOString(),
   };
+  store.selectedApiKeyByUser[currentUser.login] = alias;
 
   writeStore(store);
   await sendText(msg.chat.id, `Готово, кабінет Нової пошти збережено як "${alias}".`, menuOptions(msg));
@@ -2113,7 +2637,6 @@ async function createTtnFromProperties(msg, methodProperties, selectedKey) {
     [
       'ТТН створено ✅',
       `Номер: ${number}`,
-      item.Ref ? `Ref: ${item.Ref}` : '',
       `Кабінет: ${key.alias}`,
     ].filter(Boolean).join('\n'),
     menuOptions(msg)
@@ -2422,6 +2945,7 @@ function menuKeyboard(msg) {
   const keyboard = [
     [BUTTONS.createTtn, BUTTONS.track],
     [BUTTONS.keys, BUTTONS.addKey],
+    [BUTTONS.addDefaultWarehouse],
     [BUTTONS.clearChat, BUTTONS.logout],
   ];
 

@@ -80,6 +80,7 @@ Example empty structure lives in:
 - `sessions`: Telegram user id to logged-in account;
 - `apiKeys`: saved Nova Poshta cabinets;
 - `selectedApiKeyByUser`: selected cabinet per local bot user;
+- `defaultSenderWarehouses`: saved sender branches per local bot user and cabinet;
 - `shipments`: created TTNs and raw API responses;
 - `flows`: active Telegram conversation flows;
 - `botMessagesByChat`: bot message ids used for chat cleanup.
@@ -140,6 +141,7 @@ Keep `index.js` as the owner of chat flow, but do not put low-level infrastructu
 - `data/store.json` creation.
 - Store read/write.
 - Active flow get/set/clear.
+- Saved default sender branches.
 
 `src/textUtils.js`
 
@@ -208,16 +210,16 @@ The guided create flow is configured in `src/createTtnConfig.js`.
 
 Current flow:
 
-1. Choose Nova Poshta cabinet.
+1. Choose Nova Poshta cabinet, or use the only available cabinet automatically.
 2. Enter shipment description.
 3. Enter weight.
 4. Enter declared cost.
-5. Enter seats amount.
-6. Show a sender-section notice.
-7. Choose sender FOP/company from Nova Poshta API.
-8. Choose sender contact person from Nova Poshta API.
-9. If contact phone exists, use it automatically and skip sender phone input.
-10. Choose sender area.
+5. Show a sender-section notice.
+6. Choose sender FOP/company from Nova Poshta API, or use the only available sender automatically.
+7. Choose sender contact person from Nova Poshta API, or use the only available contact automatically.
+8. If contact phone exists, use it automatically and skip sender phone input.
+9. If saved sender branches exist, choose one by name or choose another branch.
+10. If no saved sender branch is used, choose sender area.
 11. Choose sender settlement type: city, urban-type settlement, settlement, or village.
 12. Choose sender settlement.
 13. Enter sender branch number. Sender postomat is not offered.
@@ -231,14 +233,15 @@ Current flow:
 21. Validate recipient point through Nova Poshta API and confirm full address.
 22. Enter recipient full name.
 23. Enter recipient phone.
-24. Choose payer: sender or recipient.
-25. Build Nova Poshta `methodProperties` and create TTN.
+24. Build Nova Poshta `methodProperties` and create TTN.
 
 Important:
 
 - Normal users should not type Nova Poshta `Ref` values.
 - Sender counterparty and contact refs are selected by button, then saved internally.
 - City and warehouse refs are selected or resolved internally.
+- `SeatsAmount` is not asked in UX. It defaults to `1` in `buildTtnProperties`.
+- `PayerType` is not asked in UX. It uses the default in `buildTtnProperties`.
 - `PaymentMethod` is not asked in UX. It defaults to `Cash` in `buildTtnProperties`.
 
 ## Nova Poshta API Rules
