@@ -2,16 +2,24 @@ const NOVA_POST_ENDPOINT = 'https://api.novaposhta.ua/v2.0/json/';
 
 async function buildTtnProperties(apiKey, data) {
   const citySender = await normalizeCityValue(apiKey, data.CitySender);
-  const cityRecipient = await normalizeCityValue(apiKey, data.CityRecipient);
-  const recipientAddressName = data.RecipientAddressNameRef || data.RecipientAddressName;
-
-  return {
+  const recipientWarehouseRef = data.RecipientAddressNameRef;
+  const recipientAddressName = data.RecipientAddressNameNumber || data.RecipientAddressName;
+  const methodProperties = {
     NewAddress: '1',
     PayerType: data.PayerType || 'Sender',
     PaymentMethod: data.PaymentMethod || 'Cash',
     CargoType: 'Parcel',
     VolumeGeneral: '0.001',
     Weight: data.Weight,
+    OptionsSeat: [
+      {
+        volumetricVolume: '0.001',
+        volumetricWidth: '10',
+        volumetricLength: '10',
+        volumetricHeight: '10',
+        weight: data.Weight,
+      },
+    ],
     ServiceType: 'WarehouseWarehouse',
     SeatsAmount: data.SeatsAmount || '1',
     Description: data.Description,
@@ -21,14 +29,21 @@ async function buildTtnProperties(apiKey, data) {
     SenderAddress: data.SenderAddress,
     ContactSender: data.ContactSender,
     SendersPhone: data.SendersPhone,
-    CityRecipient: cityRecipient,
     RecipientName: data.RecipientName,
     RecipientType: 'PrivatePerson',
-    RecipientAddressName: recipientAddressName,
     RecipientContactName: data.RecipientContactName || data.RecipientName,
     RecipientsPhone: data.RecipientsPhone,
     DateTime: todayForNovaPost(),
   };
+
+  if (recipientWarehouseRef) {
+    methodProperties.RecipientWarehouseRef = recipientWarehouseRef;
+  } else {
+    methodProperties.CityRecipient = await normalizeCityValue(apiKey, data.CityRecipient);
+    methodProperties.RecipientAddressName = recipientAddressName;
+  }
+
+  return methodProperties;
 }
 
 async function callNovaPost(apiKey, modelName, calledMethod, methodProperties) {
@@ -279,6 +294,20 @@ function mockNovaPost(modelName, calledMethod, methodProperties) {
           EstimatedDeliveryDate: todayForNovaPost(),
         },
       ],
+      errors: [],
+      warnings: [],
+    };
+  }
+
+  if (modelName === 'InternetDocument' && calledMethod === 'delete') {
+    const refs = Array.isArray(methodProperties.DocumentRefs)
+      ? methodProperties.DocumentRefs
+      : [];
+    return {
+      success: true,
+      data: refs.map((ref) => ({
+        Ref: ref,
+      })),
       errors: [],
       warnings: [],
     };

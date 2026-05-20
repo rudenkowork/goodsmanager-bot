@@ -217,10 +217,10 @@ Current flow:
 3. Enter weight.
 4. Enter declared cost.
 5. Show a sender-section notice.
-6. If saved sender/contact pairs exist, choose one by name or choose another sender.
-7. If no saved sender is used, choose sender FOP/company from all senders returned by the Nova Poshta API key.
-8. Choose sender contact person from Nova Poshta API, or use the only available contact automatically.
-9. If contact phone exists, use it automatically and skip sender phone input.
+6. Use the first sender returned by the selected Nova Poshta API key automatically.
+7. Use the first sender contact with a phone automatically, or the first contact if none have a phone.
+8. If contact phone exists, use it automatically and skip sender phone input.
+9. If no contact phone exists, ask for sender phone manually.
 10. If saved sender branches exist, choose one by name or choose another branch.
 11. If no saved sender branch is used, choose sender area.
 12. Choose sender settlement type: city, urban-type settlement, settlement, or village.
