@@ -1762,7 +1762,8 @@ async function handleCreateTtnWarehouseChoice(msg, flow, text) {
     return;
   }
 
-  flow.data[flow.pendingField] = field.warehouseRef ? warehouse.Ref : (warehouse.Number || warehouse.Description);
+  flow.data[flow.pendingField] = warehouse.Ref || warehouse.Number || warehouse.Description;
+  flow.data[`${flow.pendingField}Number`] = warehouse.Number || warehouseNumber;
   flow.data[`${flow.pendingField}Description`] = warehouse.Description;
   flow.data[`${flow.pendingField}Ref`] = warehouse.Ref;
   flow.step += 1;

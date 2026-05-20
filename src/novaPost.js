@@ -3,6 +3,7 @@ const NOVA_POST_ENDPOINT = 'https://api.novaposhta.ua/v2.0/json/';
 async function buildTtnProperties(apiKey, data) {
   const citySender = await normalizeCityValue(apiKey, data.CitySender);
   const cityRecipient = await normalizeCityValue(apiKey, data.CityRecipient);
+  const recipientAddressName = data.RecipientAddressNameRef || data.RecipientAddressName;
 
   return {
     NewAddress: '1',
@@ -23,7 +24,8 @@ async function buildTtnProperties(apiKey, data) {
     CityRecipient: cityRecipient,
     RecipientName: data.RecipientName,
     RecipientType: 'PrivatePerson',
-    RecipientAddressName: data.RecipientAddressName,
+    RecipientAddressName: recipientAddressName,
+    RecipientContactName: data.RecipientContactName || data.RecipientName,
     RecipientsPhone: data.RecipientsPhone,
     DateTime: todayForNovaPost(),
   };
