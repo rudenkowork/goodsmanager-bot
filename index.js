@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const http = require('http');
 const TelegramBot = require('node-telegram-bot-api');
 const {
   assertLoggedIn,
@@ -63,6 +64,7 @@ const {
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MAIN_ADMIN_TELEGRAM_USERNAME = process.env.MAIN_ADMIN_TELEGRAM_USERNAME || 'timarudy';
+const PORT = process.env.PORT;
 
 if (!BOT_TOKEN) {
   console.error('BOT_TOKEN is missing. Add it to .env before starting the bot.');
@@ -140,6 +142,7 @@ process.on('SIGTERM', () => {
 });
 
 console.log('Goods Manager bot started.');
+startHealthServer();
 
 async function shutdown(signal) {
   console.log(`Received ${signal}. Stopping Telegram polling.`);
@@ -151,6 +154,23 @@ async function shutdown(signal) {
   }
 
   process.exit(0);
+}
+
+function startHealthServer() {
+  if (!PORT) {
+    return;
+  }
+
+  const server = http.createServer((request, response) => {
+    response.writeHead(200, {
+      'Content-Type': 'text/plain',
+    });
+    response.end('ok');
+  });
+
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Health server listening on port ${PORT}.`);
+  });
 }
 
 async function handleMessage(msg) {
