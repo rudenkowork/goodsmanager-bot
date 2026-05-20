@@ -125,7 +125,7 @@ bot.on('message', async (msg) => {
     await handleMessage(msg);
   } catch (error) {
     console.error(error);
-    await sendText(msg.chat.id, `Не вийшло виконати дію: ${error.message}`);
+    await sendText(msg.chat.id, formatUserErrorMessage(error));
   }
 });
 
@@ -400,6 +400,15 @@ async function sendBotStatus(msg) {
     `Бот на звʼязку ✅\nЧас роботи: ${uptimeSeconds}s\nКористувач: ${login}`,
     menuOptions(msg)
   );
+}
+
+function formatUserErrorMessage(error) {
+  if (error && error.isNovaPostApiError) {
+    return getFriendlyNovaPostApiMessage(error);
+  }
+
+  const message = error && error.message ? error.message : 'невідома помилка';
+  return `Не вийшло виконати дію: ${message}`;
 }
 
 async function handleMenuButton(msg, text) {
@@ -1106,6 +1115,11 @@ async function handleCreateTtnFlowInput(msg, flow, text) {
     return;
   }
 
+  if (flow.mode === 'createTtnCorrectionChoice') {
+    await handleCreateTtnCorrectionChoice(msg, flow, text);
+    return;
+  }
+
   if (flow.mode === 'cityChoice') {
     await handleCreateTtnCityChoice(msg, flow, text);
     return;
@@ -1203,8 +1217,7 @@ async function handleCreateTtnFlowInput(msg, flow, text) {
     return;
   }
 
-  clearFlow(msg);
-  await finishCreateTtnFlow(msg, flow.data);
+  await finishCreateTtnFlow(msg, flow);
 }
 
 async function handleCreateTtnKeySelection(msg, flow, text) {
@@ -1217,6 +1230,7 @@ async function handleCreateTtnKeySelection(msg, flow, text) {
     return;
   }
 
+  clearCreateTtnCabinetData(flow);
   flow.data.apiKeyAlias = alias;
   flow.step = 0;
   setFlow(msg, flow);
@@ -1507,6 +1521,56 @@ function formatWarehouseStepConfirmation(flow, field, warehouse) {
   return formatWarehouseConfirmation(flow, field, warehouse);
 }
 
+async function handleCreateTtnCorrectionChoice(msg, flow, text) {
+  const choice = findChoiceByText(flow.pendingChoices || [], text);
+
+  if (!choice) {
+    await sendText(msg.chat.id, 'Натисніть, що потрібно змінити.', listChoiceOptions(flow.pendingChoices || [], 1));
+    return;
+  }
+
+  delete flow.mode;
+  delete flow.pendingChoices;
+  clearPagedChoiceState(flow);
+
+  if (choice.value === 'apiKeyAlias') {
+    await offerCreateTtnCabinetCorrection(msg, flow);
+    return;
+  }
+
+  const field = getCreateTtnFieldByKey(choice.value);
+  removeCreateFlowValueAndDependents(flow, field);
+  flow.step = getCreateTtnFieldIndex(field.key);
+  await askNextCreateTtnField(msg, flow);
+}
+
+async function offerCreateTtnCabinetCorrection(msg, flow) {
+  const store = readStore();
+  const aliases = getAvailableApiKeyAliases(msg, store);
+
+  clearCreateTtnCabinetData(flow);
+
+  if (!aliases.length) {
+    clearFlow(msg);
+    await sendText(msg.chat.id, 'Додайте актуальний API-ключ Нової пошти й почніть створення ТТН ще раз.', menuOptions(msg));
+    return;
+  }
+
+  if (aliases.length === 1) {
+    clearFlow(msg);
+    await sendText(
+      msg.chat.id,
+      'У боті зараз один кабінет НП, і Нова пошта не прийняла його дані. Перевірте цей кабінет або додайте інший API-ключ, а потім створіть ТТН ще раз.',
+      menuOptions(msg)
+    );
+    return;
+  }
+
+  flow.step = -1;
+  setFlow(msg, flow);
+  await sendText(msg.chat.id, 'Оберіть кабінет Нової пошти.', keyboardOptions(makeButtonRows(aliases, 2, true)));
+}
+
 async function offerSenderWarehouseDefaults(msg, flow, field) {
   const defaults = getDefaultSenderWarehouses(msg, flow.data.apiKeyAlias);
 
@@ -1730,8 +1794,7 @@ async function askNextCreateTtnField(msg, flow) {
     return;
   }
 
-  clearFlow(msg);
-  await finishCreateTtnFlow(msg, flow.data);
+  await finishCreateTtnFlow(msg, flow);
 }
 
 async function sendCreateTtnSectionNotice(msg, flow, field) {
@@ -2362,6 +2425,47 @@ function removeCreateFlowValue(flow, field) {
   delete flow.data[`${field.key}DeliveryTypeLabel`];
 }
 
+function removeCreateFlowValueAndDependents(flow, field) {
+  removeCreateFlowValue(flow, field);
+
+  if (field.key === 'AreaSender') {
+    removeCreateFlowValue(flow, { key: 'CitySender' });
+    removeCreateFlowValue(flow, { key: 'SenderAddress' });
+  }
+
+  if (field.key === 'CitySender') {
+    removeCreateFlowValue(flow, { key: 'SenderAddress' });
+  }
+
+  if (field.key === 'AreaRecipient') {
+    removeCreateFlowValue(flow, { key: 'CityRecipient' });
+    removeCreateFlowValue(flow, { key: 'RecipientAddressName' });
+  }
+
+  if (field.key === 'CityRecipient') {
+    removeCreateFlowValue(flow, { key: 'RecipientAddressName' });
+  }
+}
+
+function clearCreateTtnCabinetData(flow) {
+  const keys = [
+    'apiKeyAlias',
+    'Sender',
+    'ContactSender',
+    'AreaSender',
+    'CitySender',
+    'SenderAddress',
+    'SendersPhone',
+  ];
+
+  for (const key of keys) {
+    removeCreateFlowValue(flow, { key });
+  }
+
+  delete flow.senderSectionShown;
+  delete flow.senderSummaryShown;
+}
+
 function removeDefaultSenderWarehouseValue(flow, field) {
   delete flow.data[field.key];
   delete flow.data[`${field.key}Description`];
@@ -2373,13 +2477,288 @@ function removeDefaultSenderWarehouseValue(flow, field) {
   delete flow.data[`${field.key}DeliveryTypeLabel`];
 }
 
-async function finishCreateTtnFlow(msg, data) {
+async function finishCreateTtnFlow(msg, flow) {
+  const data = flow.data;
   const key = getApiKeyForCreateFlow({ data });
-  const methodProperties = await buildTtnProperties(key.apiKey, data);
 
   await sendText(msg.chat.id, 'Дані зібрано ✅ Створюю ТТН.');
 
-  await createTtnFromProperties(msg, methodProperties, key);
+  try {
+    const methodProperties = await buildTtnProperties(key.apiKey, data);
+    await createTtnFromProperties(msg, methodProperties, key);
+    clearFlow(msg);
+  } catch (error) {
+    if (await handleCreateTtnCreationError(msg, flow, error)) {
+      return;
+    }
+
+    throw error;
+  }
+}
+
+async function handleCreateTtnCreationError(msg, flow, error) {
+  if (!error || !error.isNovaPostApiError) {
+    return false;
+  }
+
+  const correction = getCreateTtnErrorCorrection(error, flow.data);
+  flow.mode = 'createTtnCorrectionChoice';
+  flow.pendingChoices = correction.choices;
+  setFlow(msg, flow);
+
+  await sendText(msg.chat.id, correction.message, listChoiceOptions(correction.choices, 1));
+  return true;
+}
+
+function getCreateTtnErrorCorrection(error, data) {
+  const details = getNovaPostErrorDetails(error);
+  const normalized = details.toLowerCase();
+  const maxWeight = getMaxAllowedWeight(details);
+
+  if (normalized.includes('recipient warehouse') && normalized.includes('max allowed weight')) {
+    return {
+      message: [
+        'Не вдалося створити ТТН.',
+        'Ця точка доставки отримувача не приймає таку вагу.',
+        data.Weight ? `Вага в ТТН: ${data.Weight} кг.` : '',
+        maxWeight ? `Ліміт для цієї точки: до ${maxWeight} кг.` : '',
+        'Можемо зменшити вагу або вибрати іншу точку доставки отримувача.',
+      ].filter(Boolean).join('\n'),
+      choices: [
+        createCorrectionChoice(BUTTONS.changeWeight, 'Weight'),
+        createCorrectionChoice(BUTTONS.changeRecipientDeliveryPoint, 'RecipientAddressName'),
+      ],
+    };
+  }
+
+  if (hasAnyText(normalized, ['sender', 'contactsender', 'counterparty', 'contact person'])
+    && !hasAnyText(normalized, ['sender warehouse', 'senderaddress', 'sender address', 'sender city', 'citysender', 'phone'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла відправника або контакт у цьому кабінеті. Перевірте кабінет Нової пошти або оберіть інший кабінет.',
+      BUTTONS.changeCabinet,
+      'apiKeyAlias'
+    );
+  }
+
+  if (hasAnyText(normalized, ['max declared cost', 'declared cost', 'cost is too high', 'cost max', 'оголошен', 'варт'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nОголошена вартість не підходить для цієї точки доставки або типу відправлення. Введіть іншу суму.',
+      BUTTONS.changeCost,
+      'Cost'
+    );
+  }
+
+  if (hasAnyText(normalized, ['sender warehouse', 'senderaddress', 'sender address', 'sender warehouse index'])
+    || (hasAnyText(normalized, ['відправника']) && hasAnyText(normalized, ['відділен', 'адрес']))) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла точку відправника. Виберіть інше відділення відправника.',
+      BUTTONS.changeSenderDeliveryPoint,
+      'SenderAddress'
+    );
+  }
+
+  if (hasAnyText(normalized, ['recipient warehouse', 'recipientaddress', 'recipient address', 'recipient warehouse index', 'відділен', 'поштомат', 'адрес'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла точку доставки отримувача. Виберіть інше відділення або поштомат.',
+      BUTTONS.changeRecipientDeliveryPoint,
+      'RecipientAddressName'
+    );
+  }
+
+  if (hasAnyText(normalized, ['weight', 'volumeweight', 'volumegeneral', 'dimensions', 'volumetric', 'вага', 'габарит'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла вагу посилки. Введіть іншу вагу.',
+      BUTTONS.changeWeight,
+      'Weight'
+    );
+  }
+
+  if (hasAnyText(normalized, ['cost', 'afterpayment', 'backwarddelivery', 'варт'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла оголошену вартість. Введіть іншу суму.',
+      BUTTONS.changeCost,
+      'Cost'
+    );
+  }
+
+  if (hasAnyText(normalized, ['recipientsphone', 'recipient phone', 'phone recipient', 'contactrecipient phone', 'телефон отримувача', 'телефон одержувача'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла телефон отримувача. Введіть номер ще раз.',
+      BUTTONS.changeRecipientPhone,
+      'RecipientsPhone'
+    );
+  }
+
+  if (hasAnyText(normalized, ['sendersphone', 'sender phone', 'phone sender', 'contactsender phone', 'телефон відправника'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла телефон відправника. Введіть номер ще раз.',
+      BUTTONS.changeSenderPhone,
+      'SendersPhone'
+    );
+  }
+
+  if (hasAnyText(normalized, ['recipientname', 'recipient name', 'recipientcontactname', 'recipient contact name', 'піб отримувача', 'піб одержувача'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла ПІБ отримувача. Введіть імʼя та прізвище ще раз.',
+      BUTTONS.changeRecipientName,
+      'RecipientName'
+    );
+  }
+
+  if (hasAnyText(normalized, ['cityrecipient', 'recipient city', 'recipientcity', 'settlementrecipient', 'місто отримувача', 'місто одержувача', 'населений пункт отримувача', 'населений пункт одержувача'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла населений пункт отримувача. Виберіть його ще раз.',
+      BUTTONS.changeRecipientCity,
+      'AreaRecipient'
+    );
+  }
+
+  if (hasAnyText(normalized, ['citysender', 'sender city', 'sendercity', 'settlementsender', 'місто відправника', 'населений пункт відправника'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла населений пункт відправника. Виберіть його ще раз.',
+      BUTTONS.changeSenderCity,
+      'AreaSender'
+    );
+  }
+
+  if (hasAnyText(normalized, ['description', 'cargo description', 'опис'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла опис посилки. Напишіть короткий простий опис.',
+      BUTTONS.changeDescription,
+      'Description'
+    );
+  }
+
+  if (hasAnyText(normalized, ['api key', 'apikey', 'access denied', 'forbidden', 'authorization', 'ключ'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла API-ключ кабінету. Перевірте ключ у кабінеті Нової пошти або додайте актуальний кабінет у боті.',
+      BUTTONS.changeCabinet,
+      'apiKeyAlias'
+    );
+  }
+
+  if (hasAnyText(normalized, ['service type', 'servicetype', 'cargo type', 'cargotype', 'payertype', 'paymentmethod', 'datetime', 'date time', 'seatsamount', 'тип доставки', 'тип вантажу', 'платник', 'форма оплати', 'дата'])) {
+    return {
+      message: [
+        'Не вдалося створити ТТН.',
+        'Нова пошта не прийняла службові параметри відправлення.',
+        'Спробуйте змінити вагу або точку доставки. Якщо помилка повториться, напишіть адміну.',
+      ].join('\n'),
+      choices: [
+        createCorrectionChoice(BUTTONS.changeWeight, 'Weight'),
+        createCorrectionChoice(BUTTONS.changeRecipientDeliveryPoint, 'RecipientAddressName'),
+      ],
+    };
+  }
+
+  return {
+    message: [
+      'Не вдалося створити ТТН.',
+      'Нова пошта не прийняла частину даних. Найчастіше це вага, вартість або точка доставки отримувача.',
+      'Що перевіримо?',
+    ].join('\n'),
+    choices: [
+      createCorrectionChoice(BUTTONS.changeWeight, 'Weight'),
+      createCorrectionChoice(BUTTONS.changeRecipientDeliveryPoint, 'RecipientAddressName'),
+      createCorrectionChoice(BUTTONS.changeCost, 'Cost'),
+    ],
+  };
+}
+
+function createSingleFieldCorrection(message, label, fieldKey) {
+  return {
+    message,
+    choices: [
+      createCorrectionChoice(label, fieldKey),
+    ],
+  };
+}
+
+function createCorrectionChoice(label, fieldKey) {
+  return {
+    label,
+    value: fieldKey,
+    description: label,
+  };
+}
+
+function getFriendlyNovaPostApiMessage(error) {
+  const details = getNovaPostErrorDetails(error);
+  const normalized = details.toLowerCase();
+
+  if (hasAnyText(normalized, ['api key', 'apikey', 'access denied', 'forbidden', 'authorization', 'ключ'])) {
+    return 'Нова пошта не прийняла API-ключ. Перевірте кабінет Нової пошти або додайте актуальний ключ.';
+  }
+
+  if (hasAnyText(normalized, ['not found', 'empty response', 'no data', 'не знайден'])) {
+    return 'Нова пошта не знайшла дані за цим запитом. Перевірте введене значення й спробуйте ще раз.';
+  }
+
+  if (hasAnyText(normalized, ['required', 'empty', 'missing', 'is not specified', 'обов', 'не заповн'])) {
+    return 'У запиті бракує обовʼязкових даних. Перевірте заповнені поля й спробуйте ще раз.';
+  }
+
+  if (hasAnyText(normalized, ['phone', 'телефон'])) {
+    return 'Нова пошта не прийняла номер телефону. Введіть номер у форматі 380XXXXXXXXX.';
+  }
+
+  if (hasAnyText(normalized, ['warehouse', 'address', 'відділен', 'поштомат', 'адрес'])) {
+    return 'Нова пошта не прийняла точку доставки. Перевірте місто та номер відділення або поштомату.';
+  }
+
+  if (hasAnyText(normalized, ['city', 'settlement', 'місто', 'населен'])) {
+    return 'Нова пошта не прийняла населений пункт. Виберіть місто або село ще раз.';
+  }
+
+  if (hasAnyText(normalized, ['weight', 'volume', 'dimension', 'вага', 'габарит'])) {
+    return 'Нова пошта не прийняла вагу або габарити посилки. Перевірте вагу й спробуйте ще раз.';
+  }
+
+  if (hasAnyText(normalized, ['cost', 'варт'])) {
+    return 'Нова пошта не прийняла вартість. Введіть іншу суму й спробуйте ще раз.';
+  }
+
+  return 'Нова пошта не прийняла запит. Перевірте дані й спробуйте ще раз.';
+}
+
+function getNovaPostErrorDetails(error) {
+  const details = [];
+
+  if (Array.isArray(error.novaPostErrors) && error.novaPostErrors.length) {
+    details.push(...error.novaPostErrors);
+  }
+
+  if (Array.isArray(error.novaPostTranslatedErrors) && error.novaPostTranslatedErrors.length) {
+    details.push(...error.novaPostTranslatedErrors);
+  }
+
+  if (Array.isArray(error.novaPostErrorCodes) && error.novaPostErrorCodes.length) {
+    details.push(...error.novaPostErrorCodes);
+  }
+
+  if (Array.isArray(error.novaPostWarnings) && error.novaPostWarnings.length) {
+    details.push(...error.novaPostWarnings);
+  }
+
+  if (!details.length && error.message) {
+    details.push(error.message);
+  }
+
+  return details.join('; ');
+}
+
+function hasAnyText(text, fragments) {
+  return fragments.some((fragment) => text.includes(fragment));
+}
+
+function getMaxAllowedWeight(text) {
+  const match = String(text || '').match(/max allowed weight:\s*([0-9]+(?:[.,][0-9]+)?)/i);
+
+  if (!match) {
+    return '';
+  }
+
+  return match[1].replace(',', '.');
 }
 
 async function handleAdminSetup(msg, args) {

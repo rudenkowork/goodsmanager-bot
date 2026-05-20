@@ -74,6 +74,8 @@ Current sender flow:
 
 The bot skips the cabinet choice when there is only one valid option. New senders are created in the Nova Poshta cabinet, then the bot can refresh the API list. Seats amount and delivery payer are not asked in chat; TTN creation uses defaults in `buildTtnProperties`.
 
+If Nova Poshta rejects TTN creation, keep the draft flow alive and offer a focused correction step. Known API errors should be translated into plain Ukrainian and route the user back to the likely bad field, such as weight, declared cost, or recipient delivery point.
+
 Current recipient address flow:
 
 1. Area.

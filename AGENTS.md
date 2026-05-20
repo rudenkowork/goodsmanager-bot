@@ -247,6 +247,7 @@ Important:
 - `SeatsAmount` is not asked in UX. It defaults to `1` in `buildTtnProperties`.
 - `PayerType` is not asked in UX. It uses the default in `buildTtnProperties`.
 - `PaymentMethod` is not asked in UX. It defaults to `Cash` in `buildTtnProperties`.
+- If Nova Poshta rejects TTN creation, do not show raw API errors to normal users. Keep the draft flow alive, explain the likely issue in Ukrainian, and offer a clear correction step such as changing weight, declared cost, or recipient delivery point.
 
 ## Nova Poshta API Rules
 

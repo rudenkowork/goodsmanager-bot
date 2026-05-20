@@ -54,6 +54,17 @@ const BUTTONS = {
   customSenderWarehouse: 'Інше відділення',
   createSender: 'Створити нового відправника',
   refreshList: 'Оновити список',
+  changeWeight: 'Змінити вагу',
+  changeRecipientDeliveryPoint: 'Змінити точку отримувача',
+  changeSenderDeliveryPoint: 'Змінити точку відправника',
+  changeCost: 'Змінити вартість',
+  changeRecipientPhone: 'Змінити телефон отримувача',
+  changeSenderPhone: 'Змінити телефон відправника',
+  changeDescription: 'Змінити опис',
+  changeRecipientName: 'Змінити ПІБ отримувача',
+  changeRecipientCity: 'Змінити місто отримувача',
+  changeSenderCity: 'Змінити місто відправника',
+  changeCabinet: 'Змінити кабінет НП',
 };
 
 const SETTLEMENT_TYPE_CHOICES = [

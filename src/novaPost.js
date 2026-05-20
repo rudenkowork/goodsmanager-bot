@@ -72,11 +72,25 @@ async function callNovaPost(apiKey, modelName, calledMethod, methodProperties) {
 
   const result = await response.json();
   if (!result.success) {
-    const errors = Array.isArray(result.errors) ? result.errors.join('; ') : 'невідома помилка';
-    const warnings = Array.isArray(result.warnings) && result.warnings.length
-      ? ` Попередження: ${result.warnings.join('; ')}`
-      : '';
-    throw new Error(`Nova Post API: ${errors}.${warnings}`);
+    const errors = Array.isArray(result.errors) ? result.errors : [];
+    const translatedErrors = Array.isArray(result.translatedErrors) ? result.translatedErrors : [];
+    const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+    const errorCodes = Array.isArray(result.errorCodes) ? result.errorCodes : [];
+    const warningCodes = Array.isArray(result.warningCodes) ? result.warningCodes : [];
+    const errorText = errors.length ? errors.join('; ') : 'невідома помилка';
+    const warningText = warnings.length ? ` Попередження: ${warnings.join('; ')}` : '';
+    const error = new Error(`Nova Post API: ${errorText}.${warningText}`);
+
+    error.isNovaPostApiError = true;
+    error.novaPostErrors = errors;
+    error.novaPostTranslatedErrors = translatedErrors;
+    error.novaPostWarnings = warnings;
+    error.novaPostErrorCodes = errorCodes;
+    error.novaPostWarningCodes = warningCodes;
+    error.novaPostModelName = modelName;
+    error.novaPostCalledMethod = calledMethod;
+
+    throw error;
   }
 
   return result;
