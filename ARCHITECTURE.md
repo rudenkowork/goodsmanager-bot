@@ -109,11 +109,35 @@ npm run check
 
 This checks `index.js` and every file in `src/`.
 
-## Railway
+## Deployment
 
-- The bot runs as a polling worker with `npm start`.
+- The bot runs with `npm start`.
+- Default mode is polling, which is best for always-on workers such as Railway.
+- Render Free web services should use webhook mode so Telegram update requests can wake the sleeping service.
 - Required variable: `BOT_TOKEN`.
 - Optional variable: `MAIN_ADMIN_TELEGRAM_USERNAME`.
+
+Polling mode:
+
+```text
+BOT_MODE=polling
+```
+
+Webhook mode:
+
+```text
+BOT_MODE=webhook
+WEBHOOK_SECRET=<long random value>
+```
+
+Render provides `RENDER_EXTERNAL_URL` for web services. For custom domains or other hosts, set:
+
+```text
+WEBHOOK_BASE_URL=https://your-public-domain.example
+```
+
+## Railway
+
 - Use a Railway Volume for `store.json` until Neon/Postgres is added.
 - Recommended volume mount path: `/app/data`.
 - Keep one replica only and keep Serverless off.

@@ -64,7 +64,14 @@ const {
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MAIN_ADMIN_TELEGRAM_USERNAME = process.env.MAIN_ADMIN_TELEGRAM_USERNAME || 'timarudy';
-const PORT = process.env.PORT;
+const BOT_MODE = normalizeBotMode(process.env.BOT_MODE);
+const IS_WEBHOOK_MODE = BOT_MODE === 'webhook';
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || BOT_TOKEN;
+const WEBHOOK_PATH = getWebhookPath();
+const WEBHOOK_URL = getWebhookUrl();
+const WEBHOOK_SECRET_TOKEN = getWebhookSecretToken(process.env.WEBHOOK_SECRET);
+const PORT = process.env.PORT || (IS_WEBHOOK_MODE ? '10000' : '');
+let httpServer = null;
 
 if (!BOT_TOKEN) {
   console.error('BOT_TOKEN is missing. Add it to .env before starting the bot.');
@@ -76,7 +83,7 @@ ensureStoreFile({
   novaPostEndpoint: NOVA_POST_ENDPOINT,
 });
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(BOT_TOKEN, { polling: !IS_WEBHOOK_MODE });
 const startedAt = new Date();
 const DEFAULT_SENDER_WAREHOUSE_FIELDS = [
   {
@@ -141,36 +148,236 @@ process.on('SIGTERM', () => {
   shutdown('SIGTERM');
 });
 
-console.log('Goods Manager bot started.');
-startHealthServer();
+console.log(`Goods Manager bot started in ${BOT_MODE} mode.`);
+startHttpServer();
+configureTelegramDelivery().catch((error) => {
+  console.error('Failed to configure Telegram delivery:', error.message);
+
+  if (IS_WEBHOOK_MODE) {
+    process.exit(1);
+  }
+});
 
 async function shutdown(signal) {
-  console.log(`Received ${signal}. Stopping Telegram polling.`);
+  console.log(`Received ${signal}. Stopping bot.`);
 
-  try {
-    await bot.stopPolling();
-  } catch (error) {
-    console.error('Failed to stop polling:', error.message);
+  if (!IS_WEBHOOK_MODE) {
+    try {
+      await bot.stopPolling();
+    } catch (error) {
+      console.error('Failed to stop polling:', error.message);
+    }
+  }
+
+  if (httpServer) {
+    try {
+      await closeHttpServer();
+    } catch (error) {
+      console.error('Failed to stop HTTP server:', error.message);
+    }
   }
 
   process.exit(0);
 }
 
-function startHealthServer() {
+async function configureTelegramDelivery() {
+  if (!IS_WEBHOOK_MODE) {
+    return;
+  }
+
+  if (!WEBHOOK_URL) {
+    throw new Error('Webhook mode needs WEBHOOK_BASE_URL, WEBHOOK_URL, PUBLIC_URL, or RENDER_EXTERNAL_URL.');
+  }
+
+  const options = {};
+
+  if (WEBHOOK_SECRET_TOKEN) {
+    options.secret_token = WEBHOOK_SECRET_TOKEN;
+  }
+
+  await bot.setWebHook(WEBHOOK_URL, options);
+  console.log('Telegram webhook configured.');
+}
+
+function startHttpServer() {
   if (!PORT) {
     return;
   }
 
-  const server = http.createServer((request, response) => {
-    response.writeHead(200, {
-      'Content-Type': 'text/plain',
-    });
-    response.end('ok');
+  httpServer = http.createServer(async (request, response) => {
+    if (IS_WEBHOOK_MODE && isWebhookRequest(request)) {
+      await handleWebhookRequest(request, response);
+      return;
+    }
+
+    if (isHealthRequest(request)) {
+      sendPlainResponse(response, 200, 'ok');
+      return;
+    }
+
+    sendPlainResponse(response, 404, 'not found');
   });
 
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Health server listening on port ${PORT}.`);
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`HTTP server listening on port ${PORT}.`);
   });
+}
+
+function closeHttpServer() {
+  return new Promise((resolve, reject) => {
+    httpServer.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
+async function handleWebhookRequest(request, response) {
+  if (request.method !== 'POST') {
+    sendPlainResponse(response, 405, 'method not allowed');
+    return;
+  }
+
+  if (!hasValidWebhookSecret(request)) {
+    sendPlainResponse(response, 403, 'forbidden');
+    return;
+  }
+
+  try {
+    const body = await readRequestBody(request);
+    const update = JSON.parse(body);
+    bot.processUpdate(update);
+    sendPlainResponse(response, 200, 'ok');
+  } catch (error) {
+    console.error('Webhook request failed:', error.message);
+    sendPlainResponse(response, 400, 'bad request');
+  }
+}
+
+function readRequestBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+
+    request.on('data', (chunk) => {
+      body += chunk;
+
+      if (body.length > 1024 * 1024) {
+        reject(new Error('Webhook request body is too large.'));
+        request.destroy();
+      }
+    });
+
+    request.on('end', () => {
+      resolve(body);
+    });
+
+    request.on('error', reject);
+  });
+}
+
+function hasValidWebhookSecret(request) {
+  if (!WEBHOOK_SECRET_TOKEN) {
+    return true;
+  }
+
+  return request.headers['x-telegram-bot-api-secret-token'] === WEBHOOK_SECRET_TOKEN;
+}
+
+function isWebhookRequest(request) {
+  return getRequestPath(request) === WEBHOOK_PATH;
+}
+
+function isHealthRequest(request) {
+  const path = getRequestPath(request);
+
+  if (path === '/') {
+    return true;
+  }
+
+  if (path === '/health') {
+    return true;
+  }
+
+  return path === '/healthz';
+}
+
+function getRequestPath(request) {
+  try {
+    const url = new URL(request.url, 'http://localhost');
+    return url.pathname;
+  } catch (error) {
+    return '/';
+  }
+}
+
+function sendPlainResponse(response, statusCode, body) {
+  response.writeHead(statusCode, {
+    'Content-Type': 'text/plain',
+  });
+  response.end(body);
+}
+
+function normalizeBotMode(value) {
+  if (value === 'webhook') {
+    return 'webhook';
+  }
+
+  return 'polling';
+}
+
+function getWebhookPath() {
+  if (process.env.WEBHOOK_URL) {
+    try {
+      const url = new URL(process.env.WEBHOOK_URL);
+      return url.pathname || '/';
+    } catch (error) {
+      return '/';
+    }
+  }
+
+  if (process.env.WEBHOOK_PATH) {
+    return normalizeWebhookPath(process.env.WEBHOOK_PATH);
+  }
+
+  return `/telegram/${encodeURIComponent(WEBHOOK_SECRET)}`;
+}
+
+function getWebhookUrl() {
+  if (process.env.WEBHOOK_URL) {
+    return process.env.WEBHOOK_URL;
+  }
+
+  const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '';
+
+  if (!baseUrl) {
+    return '';
+  }
+
+  return `${baseUrl.replace(/\/+$/, '')}${WEBHOOK_PATH}`;
+}
+
+function normalizeWebhookPath(value) {
+  if (value.startsWith('/')) {
+    return value;
+  }
+
+  return `/${value}`;
+}
+
+function getWebhookSecretToken(secret) {
+  if (!secret) {
+    return '';
+  }
+
+  if (!/^[A-Za-z0-9_-]{1,256}$/.test(secret)) {
+    return '';
+  }
+
+  return secret;
 }
 
 async function handleMessage(msg) {
