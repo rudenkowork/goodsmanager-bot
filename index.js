@@ -4333,10 +4333,21 @@ async function handleLogin(msg, args) {
 }
 
 async function handleLogout(msg) {
+  const mainAdmin = isMainAdmin(msg);
   const store = readStore();
   delete store.sessions[String(msg.from.id)];
   delete store.flows[String(msg.from.id)];
   writeStore(store);
+
+  if (mainAdmin) {
+    await sendText(
+      msg.chat.id,
+      'Сесію очищено. Ваш Telegram-нік є головним адміном, тому доступ залишається активним.',
+      menuOptions(msg)
+    );
+    return;
+  }
+
   await sendText(msg.chat.id, 'Ви вийшли з акаунта. До зустрічі!', menuOptions(msg));
 }
 

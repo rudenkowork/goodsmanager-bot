@@ -22,19 +22,17 @@ function getSessionUser(msg) {
   const store = readStore();
   const session = store.sessions[String(msg.from.id)];
 
-  if (!session) {
-    return null;
+  if (session) {
+    const user = store.users[session.login];
+    if (user) {
+      return {
+        login: session.login,
+        role: user.role,
+      };
+    }
   }
 
-  const user = store.users[session.login];
-  if (!user) {
-    return null;
-  }
-
-  return {
-    login: session.login,
-    role: user.role,
-  };
+  return getMainAdminTelegramUser(msg, store);
 }
 
 function assertLoggedIn(msg) {
@@ -47,11 +45,9 @@ function assertLoggedIn(msg) {
 }
 
 function assertMainAdminTelegram(msg) {
-  const username = msg.from && msg.from.username ? msg.from.username.toLowerCase() : '';
   const store = readStore();
-  const mainAdmin = store.config.mainAdminTelegramUsername.toLowerCase();
 
-  if (username !== mainAdmin) {
+  if (!getMainAdminTelegramUser(msg, store)) {
     throw new Error(`Ця команда доступна тільки головному адміну: @${store.config.mainAdminTelegramUsername}.`);
   }
 }
@@ -62,9 +58,26 @@ function assertMainAdminSession(msg) {
 }
 
 function isMainAdmin(msg) {
-  const username = msg.from && msg.from.username ? msg.from.username.toLowerCase() : '';
   const store = readStore();
-  return username === store.config.mainAdminTelegramUsername.toLowerCase();
+  return Boolean(getMainAdminTelegramUser(msg, store));
+}
+
+function getMainAdminTelegramUser(msg, store) {
+  const username = normalizeTelegramUsername(msg.from && msg.from.username);
+  const mainAdmin = normalizeTelegramUsername(store.config.mainAdminTelegramUsername);
+
+  if (!username || username !== mainAdmin) {
+    return null;
+  }
+
+  return {
+    login: mainAdmin,
+    role: 'admin',
+  };
+}
+
+function normalizeTelegramUsername(value) {
+  return String(value || '').trim().replace(/^@/, '').toLowerCase();
 }
 
 function getAvailableApiKeyAliases(msg, store) {
