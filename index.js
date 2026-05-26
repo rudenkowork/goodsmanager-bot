@@ -19,7 +19,10 @@ const {
   NOVA_POST_ENDPOINT,
   buildTtnProperties,
   callNovaPost,
+  checkPaymentControlAvailable,
   firstDataItem,
+  getTrackingDocuments,
+  isPaymentControlUnavailableError,
   resolveCityRef,
   validateNovaPostApiKey,
 } = require('./src/novaPost');
@@ -110,12 +113,18 @@ const DEFAULT_SENDER_WAREHOUSE_FIELDS = [
     prompt: 'Назвіть це відділення для кнопки. Наприклад: Склад Київ.',
   },
 ];
+const REPORT_LIMIT = 60;
+const KYIV_TIME_ZONE = 'Europe/Kiev';
 
 bot.setMyCommands([
   { command: 'start', description: 'Відкрити головне меню' },
   { command: 'menu', description: 'Показати панель дій' },
   { command: 'help', description: 'Підказки по боту' },
   { command: 'status', description: 'Статус бота' },
+  { command: 'shipments', description: 'Мої відправки' },
+  { command: 'payments', description: 'Оплати' },
+  { command: 'returns', description: 'Повернення' },
+  { command: 'trackttn', description: 'Відстежити ТТН' },
   { command: 'stop', description: 'Зупинити поточну дію' },
   { command: 'delttn', description: 'Видалити створену ТТН' },
   { command: 'add_default_warehouse', description: 'Зберегти стандартне відділення' },
@@ -442,6 +451,26 @@ async function handleMessage(msg) {
     return;
   }
 
+  if (command === '/shipments') {
+    await startShipmentsMenu(msg);
+    return;
+  }
+
+  if (command === '/payments') {
+    await startPaymentsMenu(msg);
+    return;
+  }
+
+  if (command === '/returns') {
+    await startReturnsMenu(msg);
+    return;
+  }
+
+  if (command === '/trackttn') {
+    await handleTrackTtnCommand(msg, args);
+    return;
+  }
+
   if (command === '/delttn') {
     await handleDeleteCreatedTtn(msg, args);
     return;
@@ -578,9 +607,13 @@ async function sendHelp(msg) {
     '',
     'Основні дії:',
     `📦 ${BUTTONS.createTtn} - проведу крок за кроком і створю накладну.`,
+    `📋 ${BUTTONS.myShipments} - покажу створені ТТН і оновлю статуси.`,
+    `💳 ${BUTTONS.payments} - покажу накладені платежі та контроль оплати.`,
+    `↩ ${BUTTONS.returns} - покажу повернення та звʼязок із початковою ТТН.`,
     `🔑 ${BUTTONS.addKey} - збережемо API-ключ із кабінету Нової пошти.`,
     `🏤 ${BUTTONS.addDefaultWarehouse} - збережемо відділення відправника для швидких ТТН.`,
     `🗂 ${BUTTONS.keys} - покажу збережені кабінети.`,
+    '/trackttn номер - оновити статус однієї ТТН.',
     '/delttn номер - видалити створену в боті ТТН.',
     '/stop - зупинити поточну дію й почати заново.',
   ];
@@ -626,6 +659,31 @@ async function handleMenuButton(msg, text) {
 
   if (text === BUTTONS.createTtn) {
     await startCreateTtnFlow(msg);
+    return;
+  }
+
+  if (text === BUTTONS.myShipments) {
+    await startShipmentsMenu(msg);
+    return;
+  }
+
+  if (text === BUTTONS.payments) {
+    await startPaymentsMenu(msg);
+    return;
+  }
+
+  if (text === BUTTONS.returns) {
+    await startReturnsMenu(msg);
+    return;
+  }
+
+  if (text === BUTTONS.accounts) {
+    await startAccountsMenu(msg);
+    return;
+  }
+
+  if (text === BUTTONS.settings) {
+    await startSettingsMenu(msg);
     return;
   }
 
@@ -822,6 +880,101 @@ async function startCreateTtnFlow(msg) {
   );
 }
 
+async function startShipmentsMenu(msg) {
+  assertLoggedIn(msg);
+  setFlow(msg, {
+    type: 'shipments',
+    mode: 'menu',
+    data: {},
+  });
+
+  await sendText(
+    msg.chat.id,
+    'Мої відправки: оберіть фільтр.',
+    keyboardOptions([
+      [BUTTONS.today, BUTTONS.chooseDate],
+      [BUTTONS.byCabinet, BUTTONS.allCabinets],
+      [BUTTONS.trackTtn],
+      [BUTTONS.back, BUTTONS.cancel],
+    ])
+  );
+}
+
+async function startPaymentsMenu(msg) {
+  assertLoggedIn(msg);
+  setFlow(msg, {
+    type: 'payments',
+    mode: 'menu',
+    data: {},
+  });
+
+  await sendText(
+    msg.chat.id,
+    'Оплати: оберіть фільтр.',
+    keyboardOptions([
+      [BUTTONS.allPayments],
+      [BUTTONS.waitingPayments, BUTTONS.receivedPayments],
+      [BUTTONS.byCabinet],
+      [BUTTONS.back, BUTTONS.cancel],
+    ])
+  );
+}
+
+async function startReturnsMenu(msg) {
+  assertLoggedIn(msg);
+  setFlow(msg, {
+    type: 'returns',
+    mode: 'menu',
+    data: {},
+  });
+
+  await sendText(
+    msg.chat.id,
+    'Повернення: оберіть фільтр.',
+    keyboardOptions([
+      [BUTTONS.allReturns],
+      [BUTTONS.byCabinet, BUTTONS.today],
+      [BUTTONS.back, BUTTONS.cancel],
+    ])
+  );
+}
+
+async function startAccountsMenu(msg) {
+  assertLoggedIn(msg);
+  setFlow(msg, {
+    type: 'accountsMenu',
+    data: {},
+  });
+
+  await sendText(
+    msg.chat.id,
+    'ФОПи / акаунти: що відкриваємо?',
+    keyboardOptions([
+      [BUTTONS.keys, BUTTONS.addKey],
+      [BUTTONS.back, BUTTONS.cancel],
+    ])
+  );
+}
+
+async function startSettingsMenu(msg) {
+  assertLoggedIn(msg);
+  setFlow(msg, {
+    type: 'settingsMenu',
+    data: {},
+  });
+
+  await sendText(
+    msg.chat.id,
+    'Налаштування: оберіть дію.',
+    keyboardOptions([
+      [BUTTONS.addDefaultWarehouse],
+      [BUTTONS.cities, BUTTONS.warehouses],
+      [BUTTONS.logout],
+      [BUTTONS.back, BUTTONS.cancel],
+    ])
+  );
+}
+
 async function handleFlowInput(msg, flow, text) {
   if (flow.type === 'login') {
     await handleLoginFlowInput(msg, flow, text);
@@ -856,6 +1009,31 @@ async function handleFlowInput(msg, flow, text) {
 
   if (flow.type === 'createTtn') {
     await handleCreateTtnFlowInput(msg, flow, text);
+    return;
+  }
+
+  if (flow.type === 'shipments') {
+    await handleShipmentsFlowInput(msg, flow, text);
+    return;
+  }
+
+  if (flow.type === 'payments') {
+    await handlePaymentsFlowInput(msg, flow, text);
+    return;
+  }
+
+  if (flow.type === 'returns') {
+    await handleReturnsFlowInput(msg, flow, text);
+    return;
+  }
+
+  if (flow.type === 'accountsMenu') {
+    await handleAccountsMenuInput(msg, text);
+    return;
+  }
+
+  if (flow.type === 'settingsMenu') {
+    await handleSettingsMenuInput(msg, text);
     return;
   }
 
@@ -1367,6 +1545,11 @@ async function handleCreateTtnFlowInput(msg, flow, text) {
     return;
   }
 
+  if (flow.mode === 'paymentControlUnavailableChoice') {
+    await handlePaymentControlUnavailableChoice(msg, flow, text);
+    return;
+  }
+
   const field = CREATE_TTN_FIELDS[flow.step];
   let value = text.trim();
 
@@ -1385,6 +1568,16 @@ async function handleCreateTtnFlowInput(msg, flow, text) {
     return;
   }
   value = validation.value;
+
+  if (field.paymentAmount && Number(value) <= 0) {
+    await sendText(msg.chat.id, 'Сума оплати має бути більшою за 0.', createTtnFieldOptions(field));
+    return;
+  }
+
+  if (field.key === 'PaymentType') {
+    await handleCreateTtnPaymentType(msg, flow, value);
+    return;
+  }
 
   if (field.areaRef) {
     await offerAreaChoices(msg, flow, field, 1);
@@ -1425,6 +1618,1066 @@ async function handleCreateTtnFlowInput(msg, flow, text) {
   }
 
   await finishCreateTtnFlow(msg, flow);
+}
+
+async function handleCreateTtnPaymentType(msg, flow, value) {
+  const key = getApiKeyForCreateFlow(flow);
+
+  flow.data.PaymentType = value;
+  flow.data.PaymentTypeLabel = getPaymentTypeLabel(value);
+  delete flow.data.PaymentAmount;
+
+  if (value === 'paymentControl') {
+    const available = await checkPaymentControlAvailable(key.apiKey, flow.data);
+
+    if (!available) {
+      flow.mode = 'paymentControlUnavailableChoice';
+      flow.pendingChoices = getPaymentControlUnavailableChoices();
+      setFlow(msg, flow);
+      await sendPaymentControlUnavailableMessage(msg, flow);
+      return;
+    }
+  }
+
+  flow.step += 1;
+  await askNextCreateTtnField(msg, flow);
+}
+
+async function handlePaymentControlUnavailableChoice(msg, flow, text) {
+  const choice = findChoiceByText(flow.pendingChoices || [], text);
+
+  if (!choice) {
+    await sendPaymentControlUnavailableMessage(msg, flow);
+    return;
+  }
+
+  delete flow.mode;
+  delete flow.pendingChoices;
+
+  if (choice.value === 'cod') {
+    flow.data.PaymentType = 'cod';
+    flow.data.PaymentTypeLabel = getPaymentTypeLabel('cod');
+    flow.step = getCreateTtnFieldIndex('PaymentAmount');
+    setFlow(msg, flow);
+    await sendText(msg.chat.id, getCreateTtnFieldByKey('PaymentAmount').prompt, textInputOptions());
+    return;
+  }
+
+  flow.data.PaymentType = 'none';
+  flow.data.PaymentTypeLabel = getPaymentTypeLabel('none');
+  delete flow.data.PaymentAmount;
+  flow.step = getCreateTtnFieldIndex('PaymentAmount') + 1;
+  await askNextCreateTtnField(msg, flow);
+}
+
+async function sendPaymentControlUnavailableMessage(msg, flow) {
+  await sendText(
+    msg.chat.id,
+    [
+      'На цьому акаунті Нової пошти недоступний контроль оплати.',
+      'Щоб використовувати цю функцію, потрібно підписати договір з Новою Поштою в особистому кабінеті.',
+    ].join('\n'),
+    listChoiceOptions(flow.pendingChoices || getPaymentControlUnavailableChoices(), 1)
+  );
+}
+
+function getPaymentControlUnavailableChoices() {
+  return [
+    {
+      label: BUTTONS.useCashOnDelivery,
+      value: 'cod',
+      description: BUTTONS.useCashOnDelivery,
+    },
+    {
+      label: BUTTONS.withoutPaymentControl,
+      value: 'none',
+      description: BUTTONS.withoutPaymentControl,
+    },
+  ];
+}
+
+function getPaymentTypeLabel(value) {
+  if (value === 'cod') {
+    return 'Накладений платіж';
+  }
+
+  if (value === 'paymentControl') {
+    return 'Контроль оплати';
+  }
+
+  return 'Без оплати';
+}
+
+async function handleShipmentsFlowInput(msg, flow, text) {
+  if (flow.mode === 'menu') {
+    if (text === BUTTONS.today) {
+      clearFlow(msg);
+      await sendShipmentsReport(msg, {
+        dateKey: getTodayDateKey(),
+      });
+      return;
+    }
+
+    if (text === BUTTONS.chooseDate) {
+      flow.mode = 'date';
+      setFlow(msg, flow);
+      await sendText(msg.chat.id, 'Введіть дату у форматі ДД.ММ.РРРР.', textInputOptions());
+      return;
+    }
+
+    if (text === BUTTONS.byCabinet) {
+      await startCabinetSelection(msg, flow, 'Оберіть один або кілька ФОПів для списку відправок.');
+      return;
+    }
+
+    if (text === BUTTONS.allCabinets) {
+      clearFlow(msg);
+      await sendShipmentsReport(msg, {});
+      return;
+    }
+
+    if (text === BUTTONS.trackTtn) {
+      flow.mode = 'trackNumber';
+      setFlow(msg, flow);
+      await sendText(msg.chat.id, 'Введіть номер ТТН для відстеження.', textInputOptions());
+      return;
+    }
+  }
+
+  if (flow.mode === 'date') {
+    const dateKey = normalizeDateInput(text);
+
+    if (!dateKey) {
+      await sendText(msg.chat.id, 'Дата виглядає некоректно. Введіть, наприклад: 26.05.2026.', textInputOptions());
+      return;
+    }
+
+    clearFlow(msg);
+    await sendShipmentsReport(msg, {
+      dateKey,
+    });
+    return;
+  }
+
+  if (flow.mode === 'cabinetSelect') {
+    await handleCabinetSelectionInput(msg, flow, text);
+    return;
+  }
+
+  if (flow.mode === 'trackNumber') {
+    clearFlow(msg);
+    await handleTrackTtnCommand(msg, text);
+    return;
+  }
+
+  await sendText(msg.chat.id, 'Оберіть фільтр для відправок.', menuOptions(msg));
+}
+
+async function handlePaymentsFlowInput(msg, flow, text) {
+  if (flow.mode === 'menu') {
+    if (text === BUTTONS.allPayments) {
+      clearFlow(msg);
+      await sendPaymentsReport(msg, {});
+      return;
+    }
+
+    if (text === BUTTONS.waitingPayments) {
+      clearFlow(msg);
+      await sendPaymentsReport(msg, {
+        paymentStatus: 'waiting',
+      });
+      return;
+    }
+
+    if (text === BUTTONS.receivedPayments) {
+      clearFlow(msg);
+      await sendPaymentsReport(msg, {
+        paymentStatus: 'received',
+      });
+      return;
+    }
+
+    if (text === BUTTONS.byCabinet) {
+      await startCabinetSelection(msg, flow, 'Оберіть один або кілька ФОПів для оплат.');
+      return;
+    }
+  }
+
+  if (flow.mode === 'cabinetSelect') {
+    await handleCabinetSelectionInput(msg, flow, text);
+    return;
+  }
+
+  await sendText(msg.chat.id, 'Оберіть фільтр для оплат.', menuOptions(msg));
+}
+
+async function handleReturnsFlowInput(msg, flow, text) {
+  if (flow.mode === 'menu') {
+    if (text === BUTTONS.allReturns) {
+      clearFlow(msg);
+      await sendReturnsReport(msg, {});
+      return;
+    }
+
+    if (text === BUTTONS.byCabinet) {
+      await startCabinetSelection(msg, flow, 'Оберіть один або кілька ФОПів для повернень.');
+      return;
+    }
+
+    if (text === BUTTONS.today) {
+      clearFlow(msg);
+      await sendReturnsReport(msg, {
+        dateKey: getTodayDateKey(),
+      });
+      return;
+    }
+  }
+
+  if (flow.mode === 'cabinetSelect') {
+    await handleCabinetSelectionInput(msg, flow, text);
+    return;
+  }
+
+  await sendText(msg.chat.id, 'Оберіть фільтр для повернень.', menuOptions(msg));
+}
+
+async function handleAccountsMenuInput(msg, text) {
+  clearFlow(msg);
+
+  if (text === BUTTONS.keys) {
+    await handleKeys(msg);
+    return;
+  }
+
+  if (text === BUTTONS.addKey) {
+    await startAddKeyFlow(msg);
+    return;
+  }
+
+  await sendText(msg.chat.id, 'Повертаю Вас у головне меню.', menuOptions(msg));
+}
+
+async function handleSettingsMenuInput(msg, text) {
+  clearFlow(msg);
+
+  if (text === BUTTONS.addDefaultWarehouse) {
+    await startDefaultSenderWarehouseFlow(msg);
+    return;
+  }
+
+  if (text === BUTTONS.cities) {
+    await startCitiesFlow(msg);
+    return;
+  }
+
+  if (text === BUTTONS.warehouses) {
+    await startWarehousesFlow(msg);
+    return;
+  }
+
+  if (text === BUTTONS.logout) {
+    await handleLogout(msg);
+    return;
+  }
+
+  await sendText(msg.chat.id, 'Повертаю Вас у головне меню.', menuOptions(msg));
+}
+
+async function startCabinetSelection(msg, flow, title) {
+  const store = readStore();
+  const aliases = getAvailableApiKeyAliases(msg, store);
+
+  if (!aliases.length) {
+    clearFlow(msg);
+    await sendText(msg.chat.id, 'Кабінетів Нової пошти ще немає.', menuOptions(msg));
+    return;
+  }
+
+  flow.mode = 'cabinetSelect';
+  flow.data.selectedAliases = [];
+  flow.data.cabinetSelectionTitle = title;
+  setFlow(msg, flow);
+  await sendCabinetSelectionPrompt(msg, flow);
+}
+
+async function handleCabinetSelectionInput(msg, flow, text) {
+  if (text === BUTTONS.showSelected) {
+    const aliases = flow.data.selectedAliases || [];
+
+    if (!aliases.length) {
+      await sendText(msg.chat.id, 'Оберіть хоча б один ФОП зі списку.', cabinetSelectionOptions(msg, flow));
+      return;
+    }
+
+    clearFlow(msg);
+
+    if (flow.type === 'shipments') {
+      await sendShipmentsReport(msg, {
+        aliases,
+      });
+      return;
+    }
+
+    if (flow.type === 'payments') {
+      await sendPaymentsReport(msg, {
+        aliases,
+      });
+      return;
+    }
+
+    if (flow.type === 'returns') {
+      await sendReturnsReport(msg, {
+        aliases,
+      });
+      return;
+    }
+  }
+
+  const store = readStore();
+  const aliases = getAvailableApiKeyAliases(msg, store);
+  const alias = normalizeCabinetSelectionLabel(text);
+
+  if (!aliases.includes(alias)) {
+    await sendText(msg.chat.id, 'Натисніть ФОП зі списку нижче.', cabinetSelectionOptions(msg, flow));
+    return;
+  }
+
+  flow.data.selectedAliases = toggleSelectedAlias(flow.data.selectedAliases || [], alias);
+  setFlow(msg, flow);
+  await sendCabinetSelectionPrompt(msg, flow);
+}
+
+async function sendCabinetSelectionPrompt(msg, flow) {
+  await sendText(
+    msg.chat.id,
+    flow.data.cabinetSelectionTitle || 'Оберіть ФОП.',
+    cabinetSelectionOptions(msg, flow)
+  );
+}
+
+function cabinetSelectionOptions(msg, flow) {
+  const store = readStore();
+  const aliases = getAvailableApiKeyAliases(msg, store);
+  const selected = new Set(flow.data.selectedAliases || []);
+  const buttons = aliases.map((alias) => formatCabinetSelectionLabel(alias, selected.has(alias)));
+  const rows = makeButtonRows(buttons, 2, false);
+
+  rows.push([BUTTONS.showSelected]);
+  rows.push([BUTTONS.back, BUTTONS.cancel]);
+
+  return keyboardOptions(rows);
+}
+
+function formatCabinetSelectionLabel(alias, selected) {
+  const prefix = selected ? '[x]' : '[ ]';
+  return `${prefix} ${alias}`;
+}
+
+function normalizeCabinetSelectionLabel(text) {
+  return normalizeAlias(String(text || '').replace(/^\[[ xX]\]\s*/, ''));
+}
+
+function toggleSelectedAlias(aliases, alias) {
+  if (aliases.includes(alias)) {
+    return aliases.filter((item) => item !== alias);
+  }
+
+  return aliases.concat(alias);
+}
+
+async function handleTrackTtnCommand(msg, args) {
+  assertLoggedIn(msg);
+  const number = normalizeTtnNumber(args);
+
+  if (!number) {
+    await sendText(msg.chat.id, 'Формат команди: /trackttn номер');
+    return;
+  }
+
+  const store = readStore();
+  const entry = getVisibleShipmentEntries(msg, store).find((item) => item.number === number);
+
+  if (!entry) {
+    await sendText(msg.chat.id, 'Не знайшов таку ТТН серед створених у цьому боті.', menuOptions(msg));
+    return;
+  }
+
+  await refreshTrackingForEntries(store, [entry]);
+  await sendText(msg.chat.id, formatShipmentDetails(entry.number, entry.shipment), menuOptions(msg));
+}
+
+async function sendShipmentsReport(msg, filters) {
+  const store = readStore();
+  let entries = getVisibleShipmentEntries(msg, store);
+
+  entries = filterShipmentEntries(entries, filters);
+  entries = sortShipmentEntries(entries).slice(0, REPORT_LIMIT);
+  await refreshTrackingForEntries(store, entries);
+
+  const title = getShipmentsReportTitle(filters);
+
+  if (!entries.length) {
+    await sendText(msg.chat.id, `${title}\n\nВідправок не знайдено.`, menuOptions(msg));
+    return;
+  }
+
+  await sendText(msg.chat.id, formatShipmentsReport(title, entries), menuOptions(msg));
+}
+
+async function sendPaymentsReport(msg, filters) {
+  const store = readStore();
+  let entries = getVisibleShipmentEntries(msg, store);
+
+  entries = filterShipmentEntries(entries, filters);
+  entries = sortShipmentEntries(entries).slice(0, REPORT_LIMIT);
+  await refreshTrackingForEntries(store, entries);
+  entries = entries.filter((entry) => shipmentHasPayment(entry.shipment));
+  entries = filterPaymentEntries(entries, filters);
+
+  const title = getPaymentsReportTitle(filters);
+
+  if (!entries.length) {
+    await sendText(msg.chat.id, `${title}\n\nОплат не знайдено.`, menuOptions(msg));
+    return;
+  }
+
+  await sendText(msg.chat.id, formatPaymentsReport(title, entries), menuOptions(msg));
+}
+
+async function sendReturnsReport(msg, filters) {
+  const store = readStore();
+  let entries = getVisibleShipmentEntries(msg, store);
+
+  entries = filterShipmentEntries(entries, filters);
+  entries = sortShipmentEntries(entries).slice(0, REPORT_LIMIT);
+  await refreshTrackingForEntries(store, entries);
+  entries = entries.filter((entry) => shipmentHasReturn(entry.shipment));
+
+  const title = getReturnsReportTitle(filters);
+
+  if (!entries.length) {
+    await sendText(msg.chat.id, `${title}\n\nПовернень не знайдено.`, menuOptions(msg));
+    return;
+  }
+
+  await sendText(msg.chat.id, formatReturnsReport(title, entries), menuOptions(msg));
+}
+
+function getVisibleShipmentEntries(msg, store) {
+  const user = assertLoggedIn(msg);
+
+  return Object.keys(store.shipments || {}).map((number) => ({
+    number,
+    shipment: store.shipments[number],
+  })).filter((entry) => {
+    return entry.shipment.createdBy === user.login || isMainAdmin(msg);
+  });
+}
+
+function filterShipmentEntries(entries, filters) {
+  return entries.filter((entry) => {
+    if (filters.dateKey && getShipmentDateKey(entry.shipment) !== filters.dateKey) {
+      return false;
+    }
+
+    if (filters.aliases && filters.aliases.length && !filters.aliases.includes(entry.shipment.apiKeyAlias)) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function filterPaymentEntries(entries, filters) {
+  if (!filters.paymentStatus) {
+    return entries;
+  }
+
+  return entries.filter((entry) => {
+    const status = getPaymentStatusValue(entry.shipment.payment);
+
+    if (filters.paymentStatus === 'received') {
+      return status === 'received' || status === 'paid';
+    }
+
+    return status === filters.paymentStatus;
+  });
+}
+
+function sortShipmentEntries(entries) {
+  return entries.slice().sort((left, right) => {
+    return getShipmentTime(right.shipment) - getShipmentTime(left.shipment);
+  });
+}
+
+async function refreshTrackingForEntries(store, entries) {
+  const groups = {};
+
+  for (const entry of entries) {
+    const alias = entry.shipment.apiKeyAlias;
+    const key = store.apiKeys && store.apiKeys[alias] ? store.apiKeys[alias] : null;
+
+    if (!key) {
+      continue;
+    }
+
+    if (!groups[alias]) {
+      groups[alias] = {
+        apiKey: key.apiKey,
+        entries: [],
+      };
+    }
+
+    groups[alias].entries.push(entry);
+  }
+
+  let changed = false;
+
+  for (const group of Object.values(groups)) {
+    const documents = group.entries.map((entry) => ({
+      number: entry.number,
+      phone: getTrackingPhone(entry.shipment),
+    }));
+
+    try {
+      const trackingItems = await getTrackingDocuments(group.apiKey, documents);
+      const trackingByNumber = mapTrackingItemsByNumber(trackingItems);
+
+      for (const entry of group.entries) {
+        const tracking = trackingByNumber[entry.number];
+
+        if (tracking) {
+          applyTrackingToShipment(entry.number, entry.shipment, tracking);
+          changed = true;
+        }
+      }
+    } catch (error) {
+      for (const entry of group.entries) {
+        entry.shipment.statusUpdateError = new Date().toISOString();
+      }
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    writeStore(store);
+  }
+}
+
+function mapTrackingItemsByNumber(items) {
+  const result = {};
+
+  for (const item of items || []) {
+    const number = normalizeTtnNumber(item.Number || item.DocumentNumber);
+
+    if (number) {
+      result[number] = item;
+    }
+  }
+
+  return result;
+}
+
+function applyTrackingToShipment(number, shipment, tracking) {
+  const now = new Date().toISOString();
+  const deliveryPoint = tracking.WarehouseRecipientAddress
+    || tracking.WarehouseRecipient
+    || tracking.RecipientAddress
+    || shipment.recipientDeliveryPoint
+    || '';
+
+  shipment.status = {
+    code: String(tracking.StatusCode || ''),
+    text: tracking.Status || shipment.status && shipment.status.text || 'Статус оновлено',
+    deliveryPoint,
+    scheduledDeliveryDate: tracking.ScheduledDeliveryDate || '',
+    actualDeliveryDate: tracking.ActualDeliveryDate || tracking.RecipientDateTime || '',
+    updatedAt: now,
+    trackingUpdatedAt: tracking.TrackingUpdateDate || '',
+  };
+
+  applyPaymentTracking(shipment, tracking, now);
+  applyReturnTracking(number, shipment, tracking, now);
+}
+
+function applyPaymentTracking(shipment, tracking, updatedAt) {
+  const payment = shipment.payment || inferPaymentFromTracking(tracking);
+
+  if (!payment) {
+    return;
+  }
+
+  const amount = payment.amount
+    || tracking.AfterpaymentOnGoodsCost
+    || tracking.RedeliverySum
+    || tracking.AmountToPay
+    || tracking.ExpressWaybillAmountToPay
+    || '';
+
+  shipment.payment = {
+    type: payment.type || inferPaymentTypeFromTracking(tracking),
+    label: payment.label || getPaymentTypeLabel(payment.type || inferPaymentTypeFromTracking(tracking)),
+    amount,
+    status: normalizePaymentStatus(tracking),
+    statusText: getPaymentStatusText(tracking),
+    paymentStatusDate: tracking.PaymentStatusDate || tracking.LastTransactionDateTimeGM || '',
+    updatedAt,
+  };
+}
+
+function inferPaymentFromTracking(tracking) {
+  const type = inferPaymentTypeFromTracking(tracking);
+
+  if (!type) {
+    return null;
+  }
+
+  return {
+    type,
+    label: getPaymentTypeLabel(type),
+    amount: tracking.AfterpaymentOnGoodsCost || tracking.RedeliverySum || '',
+    status: 'waiting',
+  };
+}
+
+function inferPaymentTypeFromTracking(tracking) {
+  if (tracking.AfterpaymentOnGoodsCost) {
+    return 'paymentControl';
+  }
+
+  if (isTruthyApiValue(tracking.Redelivery) || tracking.RedeliverySum || tracking.RedeliveryNum) {
+    return 'cod';
+  }
+
+  return '';
+}
+
+function normalizePaymentStatus(tracking) {
+  const code = String(tracking.StatusCode || '');
+  const text = getPaymentStatusText(tracking).toLowerCase();
+
+  if (isReturnTracking(tracking)) {
+    return 'returned';
+  }
+
+  if (code === '11' || hasAnyText(text, ['перерах', 'зарах', 'отриман', 'received', 'transfer'])) {
+    return 'received';
+  }
+
+  if (code === '10' || hasAnyText(text, ['оплач', 'paid', 'success', 'успіш'])) {
+    return 'paid';
+  }
+
+  if (Number(tracking.AmountPaid || 0) > 0) {
+    return 'paid';
+  }
+
+  return 'waiting';
+}
+
+function getPaymentStatusText(tracking) {
+  return [
+    tracking.PaymentStatus,
+    tracking.ExpressWaybillPaymentStatus,
+    tracking.LastTransactionStatusGM,
+  ].filter(Boolean).join(', ');
+}
+
+function applyReturnTracking(number, shipment, tracking, updatedAt) {
+  if (!isReturnTracking(tracking)) {
+    return;
+  }
+
+  let returnNumber = normalizeTtnNumber(tracking.LastCreatedOnTheBasisNumber || tracking.CreatedOnTheBasis);
+
+  if (!returnNumber && tracking.OwnerDocumentNumber && tracking.OwnerDocumentNumber !== number) {
+    returnNumber = normalizeTtnNumber(tracking.OwnerDocumentNumber);
+  }
+
+  shipment.return = {
+    originalNumber: number,
+    returnNumber,
+    status: tracking.Status || '',
+    statusCode: String(tracking.StatusCode || ''),
+    reason: tracking.UndeliveryReasonsSubtypeDescription || tracking.UndeliveryReasons || '',
+    updatedAt,
+  };
+}
+
+function isReturnTracking(tracking) {
+  const code = String(tracking.StatusCode || '');
+  const text = [
+    tracking.Status,
+    tracking.UndeliveryReasonsSubtypeDescription,
+    tracking.LastCreatedOnTheBasisDocumentType,
+    tracking.OwnerDocumentType,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  return ['102', '103', '105', '106'].includes(code)
+    || hasAnyText(text, ['повер', 'возврат', 'return', 'відмова'])
+    || Boolean(tracking.LastCreatedOnTheBasisNumber);
+}
+
+function shipmentHasPayment(shipment) {
+  return Boolean(shipment.payment && shipment.payment.type && shipment.payment.type !== 'none');
+}
+
+function shipmentHasReturn(shipment) {
+  return Boolean(shipment.return && (shipment.return.status || shipment.return.returnNumber));
+}
+
+function getTrackingPhone(shipment) {
+  return shipment.recipientPhone || shipment.senderPhone || '';
+}
+
+function getShipmentsReportTitle(filters) {
+  if (filters.dateKey === getTodayDateKey()) {
+    return 'Мої відправки за сьогодні:';
+  }
+
+  if (filters.dateKey) {
+    return `Мої відправки за ${formatDateForUser(filters.dateKey)}:`;
+  }
+
+  if (filters.aliases && filters.aliases.length) {
+    return `Мої відправки по ФОПах: ${filters.aliases.join(', ')}`;
+  }
+
+  return 'Мої відправки по всіх ФОПах:';
+}
+
+function getPaymentsReportTitle(filters) {
+  if (filters.paymentStatus === 'waiting') {
+    return 'Оплати, що очікуються:';
+  }
+
+  if (filters.paymentStatus === 'received') {
+    return 'Отримані оплати:';
+  }
+
+  if (filters.aliases && filters.aliases.length) {
+    return `Оплати по ФОПах: ${filters.aliases.join(', ')}`;
+  }
+
+  return 'Усі оплати:';
+}
+
+function getReturnsReportTitle(filters) {
+  if (filters.dateKey === getTodayDateKey()) {
+    return 'Повернення за сьогодні:';
+  }
+
+  if (filters.aliases && filters.aliases.length) {
+    return `Повернення по ФОПах: ${filters.aliases.join(', ')}`;
+  }
+
+  return 'Усі повернення:';
+}
+
+function formatShipmentsReport(title, entries) {
+  const lines = [title, ''];
+
+  for (const group of groupEntriesByAlias(entries)) {
+    lines.push(formatCabinetTitle(group.alias));
+
+    for (const entry of group.entries) {
+      lines.push(...formatShipmentSummaryLines(entry));
+      lines.push('');
+    }
+  }
+
+  if (entries.length === REPORT_LIMIT) {
+    lines.push(`Показано останні ${REPORT_LIMIT} відправок.`);
+  }
+
+  return lines.join('\n').trim();
+}
+
+function formatPaymentsReport(title, entries) {
+  const lines = [title, ''];
+
+  for (const group of groupEntriesByAlias(entries)) {
+    lines.push(formatCabinetTitle(group.alias));
+
+    for (const entry of group.entries) {
+      const payment = entry.shipment.payment || {};
+      lines.push(`  ТТН: ${entry.number}`);
+      lines.push(`  Отримувач: ${formatRecipientName(entry.shipment)}`);
+      lines.push(`  Сума: ${formatMoneyText(payment.amount)}`);
+      lines.push(`  Тип: ${payment.label || getPaymentTypeLabel(payment.type)}`);
+      lines.push(`  Статус: ${formatPaymentStatus(payment)}`);
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n').trim();
+}
+
+function formatReturnsReport(title, entries) {
+  const lines = [title, ''];
+
+  for (const group of groupEntriesByAlias(entries)) {
+    lines.push(formatCabinetTitle(group.alias));
+
+    for (const entry of group.entries) {
+      const returnInfo = entry.shipment.return || {};
+      lines.push(`  Початкова ТТН: ${entry.number}`);
+      lines.push(`  Отримувач: ${formatRecipientName(entry.shipment)}`);
+      lines.push(`  Статус: ${returnInfo.reason || returnInfo.status || getShipmentStatusText(entry.shipment)}`);
+      lines.push(`  ТТН повернення: ${returnInfo.returnNumber || 'ще не отримано від Нової пошти'}`);
+      lines.push(`  Статус повернення: ${returnInfo.status || 'оновлюється'}`);
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n').trim();
+}
+
+function formatShipmentSummaryLines(entry) {
+  const lines = [
+    `  ТТН: ${entry.number}`,
+    `  Отримувач: ${formatRecipientName(entry.shipment)}`,
+    `  Дата: ${formatDateTimeForUser(entry.shipment.createdAt)}`,
+    `  Статус: ${getShipmentStatusText(entry.shipment)}`,
+  ];
+
+  if (entry.shipment.recipientDeliveryPoint || entry.shipment.status && entry.shipment.status.deliveryPoint) {
+    lines.push(`  Доставка: ${entry.shipment.status && entry.shipment.status.deliveryPoint || entry.shipment.recipientDeliveryPoint}`);
+  }
+
+  if (shipmentHasPayment(entry.shipment)) {
+    lines.push(`  Оплата: ${formatPaymentLine(entry.shipment.payment)}`);
+  }
+
+  return lines;
+}
+
+function formatShipmentDetails(number, shipment) {
+  const lines = [
+    `ТТН: ${number}`,
+    `ФОП: ${shipment.apiKeyAlias || 'невідомо'}`,
+    `Дата створення: ${formatDateTimeForUser(shipment.createdAt)}`,
+    `Отримувач: ${formatRecipientName(shipment)}`,
+    `Статус доставки: ${getShipmentStatusText(shipment)}`,
+    `Точка доставки: ${shipment.status && shipment.status.deliveryPoint || shipment.recipientDeliveryPoint || 'немає даних'}`,
+  ];
+
+  if (shipmentHasPayment(shipment)) {
+    lines.push(`Оплата: ${formatPaymentLine(shipment.payment)}`);
+    lines.push(`Статус оплати: ${formatPaymentStatus(shipment.payment)}`);
+  } else {
+    lines.push('Оплата: без накладеного платежу або контролю оплати');
+  }
+
+  if (shipment.return && (shipment.return.status || shipment.return.returnNumber)) {
+    lines.push(`Повернення: ${shipment.return.returnNumber || 'номер ще не отримано'}, ${shipment.return.status || 'статус оновлюється'}`);
+  }
+
+  return lines.join('\n');
+}
+
+function groupEntriesByAlias(entries) {
+  const groups = [];
+  const byAlias = {};
+
+  for (const entry of entries) {
+    const alias = entry.shipment.apiKeyAlias || 'без кабінету';
+
+    if (!byAlias[alias]) {
+      byAlias[alias] = {
+        alias,
+        entries: [],
+      };
+      groups.push(byAlias[alias]);
+    }
+
+    byAlias[alias].entries.push(entry);
+  }
+
+  return groups;
+}
+
+function formatCabinetTitle(alias) {
+  return `ФОП ${alias}`;
+}
+
+function formatRecipientName(shipment) {
+  const name = shipment.recipientName || shipment.recipientContactName || 'немає даних';
+  return shortenFullName(name);
+}
+
+function shortenFullName(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+
+  if (parts.length >= 2) {
+    return `${parts[0]} ${parts[1].slice(0, 1)}.`;
+  }
+
+  return name || 'немає даних';
+}
+
+function getShipmentStatusText(shipment) {
+  if (shipment.status && shipment.status.text) {
+    return shipment.status.text;
+  }
+
+  if (shipment.raw && shipment.raw.StateName) {
+    return shipment.raw.StateName;
+  }
+
+  return 'Створено, статус ще не оновлено';
+}
+
+function formatPaymentLine(payment) {
+  if (!payment || !payment.type || payment.type === 'none') {
+    return 'без оплати';
+  }
+
+  return `${payment.label || getPaymentTypeLabel(payment.type)}, ${formatMoneyText(payment.amount)}, ${formatPaymentStatus(payment)}`;
+}
+
+function formatPaymentStatus(payment) {
+  const status = getPaymentStatusValue(payment);
+
+  if (status === 'paid') {
+    return 'оплачено';
+  }
+
+  if (status === 'received') {
+    return 'отримано';
+  }
+
+  if (status === 'returned') {
+    return 'повернено';
+  }
+
+  return 'очікується';
+}
+
+function getPaymentStatusValue(payment) {
+  return payment && payment.status ? payment.status : 'waiting';
+}
+
+function formatMoneyText(value) {
+  if (value === undefined || value === null || value === '') {
+    return 'сума невідома';
+  }
+
+  return `${value} грн`;
+}
+
+function getShipmentDateKey(shipment) {
+  return formatDateKey(shipment.createdAt);
+}
+
+function getShipmentTime(shipment) {
+  const time = Date.parse(shipment.createdAt || '');
+  return Number.isFinite(time) ? time : 0;
+}
+
+function getTodayDateKey() {
+  return formatDateKey(new Date());
+}
+
+function formatDateKey(value) {
+  const date = value instanceof Date ? value : new Date(value || '');
+
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: KYIV_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const year = getDatePart(parts, 'year');
+  const month = getDatePart(parts, 'month');
+  const day = getDatePart(parts, 'day');
+
+  return `${year}-${month}-${day}`;
+}
+
+function getDatePart(parts, type) {
+  const part = parts.find((item) => item.type === type);
+  return part ? part.value : '';
+}
+
+function normalizeDateInput(value) {
+  const text = String(value || '').trim();
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (iso) {
+    return validDateKey(iso[1], iso[2], iso[3]);
+  }
+
+  const dotted = text.match(/^(\d{1,2})[.\-/](\d{1,2})(?:[.\-/](\d{2,4}))?$/);
+
+  if (!dotted) {
+    return '';
+  }
+
+  let year = dotted[3] || getTodayDateKey().slice(0, 4);
+
+  if (year.length === 2) {
+    year = `20${year}`;
+  }
+
+  return validDateKey(year, dotted[2], dotted[1]);
+}
+
+function validDateKey(yearValue, monthValue, dayValue) {
+  const year = Number(yearValue);
+  const month = Number(monthValue);
+  const day = Number(dayValue);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return '';
+  }
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    return '';
+  }
+
+  return [
+    String(year).padStart(4, '0'),
+    String(month).padStart(2, '0'),
+    String(day).padStart(2, '0'),
+  ].join('-');
+}
+
+function formatDateForUser(dateKey) {
+  const parts = String(dateKey || '').split('-');
+
+  if (parts.length !== 3) {
+    return dateKey || 'невідома дата';
+  }
+
+  return `${parts[2]}.${parts[1]}.${parts[0]}`;
+}
+
+function formatDateTimeForUser(value) {
+  const date = new Date(value || '');
+
+  if (Number.isNaN(date.getTime())) {
+    return 'невідома дата';
+  }
+
+  return new Intl.DateTimeFormat('uk-UA', {
+    timeZone: KYIV_TIME_ZONE,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function isTruthyApiValue(value) {
+  return value === true || value === 1 || value === '1' || value === 'true';
 }
 
 async function handleCreateTtnKeySelection(msg, flow, text) {
@@ -1745,6 +2998,24 @@ async function handleCreateTtnCorrectionChoice(msg, flow, text) {
     return;
   }
 
+  if (choice.value === 'cod' || choice.value === 'none') {
+    if (choice.value === 'cod') {
+      flow.data.PaymentType = 'cod';
+      flow.data.PaymentTypeLabel = getPaymentTypeLabel('cod');
+      flow.step = getCreateTtnFieldIndex('PaymentAmount');
+      setFlow(msg, flow);
+      await sendText(msg.chat.id, getCreateTtnFieldByKey('PaymentAmount').prompt, textInputOptions());
+      return;
+    }
+
+    flow.data.PaymentType = 'none';
+    flow.data.PaymentTypeLabel = getPaymentTypeLabel('none');
+    delete flow.data.PaymentAmount;
+    flow.step = getCreateTtnFieldIndex('PaymentAmount') + 1;
+    await askNextCreateTtnField(msg, flow);
+    return;
+  }
+
   const field = getCreateTtnFieldByKey(choice.value);
   removeCreateFlowValueAndDependents(flow, field);
   flow.step = getCreateTtnFieldIndex(field.key);
@@ -1958,7 +3229,8 @@ async function handleCreateTtnSenderContactChoice(msg, flow, text) {
 
 async function askNextCreateTtnField(msg, flow) {
   if (flow.step < CREATE_TTN_FIELDS.length) {
-    while (flow.step < CREATE_TTN_FIELDS.length && flow.data[CREATE_TTN_FIELDS[flow.step].key]) {
+    while (flow.step < CREATE_TTN_FIELDS.length
+      && (flow.data[CREATE_TTN_FIELDS[flow.step].key] || shouldSkipCreateTtnField(flow, CREATE_TTN_FIELDS[flow.step]))) {
       flow.step += 1;
     }
   }
@@ -2070,6 +3342,14 @@ function normalizeFieldValue(field, value) {
     ok: true,
     value,
   };
+}
+
+function shouldSkipCreateTtnField(flow, field) {
+  if (field.paymentAmount) {
+    return flow.data.PaymentType !== 'cod' && flow.data.PaymentType !== 'paymentControl';
+  }
+
+  return false;
 }
 
 function getFieldOptionLabel(option) {
@@ -2624,6 +3904,7 @@ function findChoiceByText(choices, text) {
 function removeCreateFlowValue(flow, field) {
   delete flow.data[field.key];
   delete flow.data[`${field.key}Description`];
+  delete flow.data[`${field.key}Label`];
   delete flow.data[`${field.key}Ref`];
   delete flow.data[`${field.key}Number`];
   delete flow.data[`${field.key}SettlementType`];
@@ -2642,6 +3923,10 @@ function removeCreateFlowValueAndDependents(flow, field) {
 
   if (field.key === 'CitySender') {
     removeCreateFlowValue(flow, { key: 'SenderAddress' });
+  }
+
+  if (field.key === 'PaymentType') {
+    removeCreateFlowValue(flow, { key: 'PaymentAmount' });
   }
 
   if (field.key === 'AreaRecipient') {
@@ -2663,6 +3948,8 @@ function clearCreateTtnCabinetData(flow) {
     'CitySender',
     'SenderAddress',
     'SendersPhone',
+    'PaymentType',
+    'PaymentAmount',
   ];
 
   for (const key of keys) {
@@ -2692,7 +3979,17 @@ async function finishCreateTtnFlow(msg, flow) {
 
   try {
     const methodProperties = await buildTtnProperties(key.apiKey, data);
-    await createTtnFromProperties(msg, methodProperties, key);
+    const paymentControlAvailable = await checkPaymentControlAvailable(key.apiKey, data, methodProperties);
+
+    if (!paymentControlAvailable) {
+      flow.mode = 'paymentControlUnavailableChoice';
+      flow.pendingChoices = getPaymentControlUnavailableChoices();
+      setFlow(msg, flow);
+      await sendPaymentControlUnavailableMessage(msg, flow);
+      return;
+    }
+
+    await createTtnFromProperties(msg, methodProperties, key, data);
     clearFlow(msg);
   } catch (error) {
     if (await handleCreateTtnCreationError(msg, flow, error)) {
@@ -2755,6 +4052,16 @@ function getCreateTtnErrorCorrection(error, data) {
     );
   }
 
+  if (isPaymentControlUnavailableError(error)) {
+    return {
+      message: [
+        'На цьому акаунті Нової пошти недоступний контроль оплати.',
+        'Щоб використовувати цю функцію, потрібно підписати договір з Новою Поштою в особистому кабінеті.',
+      ].join('\n'),
+      choices: getPaymentControlUnavailableChoices(),
+    };
+  }
+
   if (hasAnyText(normalized, ['sender warehouse', 'senderaddress', 'sender address', 'sender warehouse index'])
     || (hasAnyText(normalized, ['відправника']) && hasAnyText(normalized, ['відділен', 'адрес']))) {
     return createSingleFieldCorrection(
@@ -2780,7 +4087,15 @@ function getCreateTtnErrorCorrection(error, data) {
     );
   }
 
-  if (hasAnyText(normalized, ['cost', 'afterpayment', 'backwarddelivery', 'варт'])) {
+  if (hasAnyText(normalized, ['afterpayment', 'backwarddelivery', 'redelivery'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла суму оплати. Введіть іншу суму.',
+      BUTTONS.changePaymentAmount,
+      'PaymentAmount'
+    );
+  }
+
+  if (hasAnyText(normalized, ['cost', 'варт'])) {
     return createSingleFieldCorrection(
       'Не вдалося створити ТТН.\nНова пошта не прийняла оголошену вартість. Введіть іншу суму.',
       BUTTONS.changeCost,
@@ -3205,7 +4520,7 @@ async function handleUseKey(msg, args) {
   await sendText(msg.chat.id, `Обрано кабінет: ${alias}`, menuOptions(msg));
 }
 
-async function createTtnFromProperties(msg, methodProperties, selectedKey) {
+async function createTtnFromProperties(msg, methodProperties, selectedKey, flowData) {
   const user = assertLoggedIn(msg);
   const key = selectedKey || getSelectedApiKey(msg);
   const response = await callNovaPost(key.apiKey, 'InternetDocument', 'save', methodProperties);
@@ -3218,6 +4533,26 @@ async function createTtnFromProperties(msg, methodProperties, selectedKey) {
     createdBy: user.login,
     createdAt: new Date().toISOString(),
     ref: item.Ref || '',
+    description: methodProperties.Description || '',
+    weight: methodProperties.Weight || '',
+    cost: methodProperties.Cost || '',
+    senderName: flowData && flowData.SenderDescription || '',
+    senderContactName: flowData && flowData.ContactSenderDescription || '',
+    senderPhone: methodProperties.SendersPhone || '',
+    senderCity: flowData && flowData.CitySenderDescription || '',
+    senderDeliveryPoint: flowData && flowData.SenderAddressDescription || '',
+    recipientName: methodProperties.RecipientName || '',
+    recipientContactName: methodProperties.RecipientContactName || '',
+    recipientPhone: methodProperties.RecipientsPhone || '',
+    recipientCity: flowData && flowData.CityRecipientDescription || '',
+    recipientDeliveryPoint: flowData && flowData.RecipientAddressNameDescription || '',
+    payment: createShipmentPaymentRecord(flowData, methodProperties),
+    status: {
+      code: '',
+      text: 'Створено, очікує передачі до Нової пошти',
+      deliveryPoint: flowData && flowData.RecipientAddressNameDescription || '',
+      updatedAt: new Date().toISOString(),
+    },
     raw: item,
   };
   writeStore(store);
@@ -3228,9 +4563,65 @@ async function createTtnFromProperties(msg, methodProperties, selectedKey) {
       'ТТН створено ✅',
       `Номер: ${number}`,
       `Кабінет: ${key.alias}`,
+      store.shipments[number].payment ? `Оплата: ${formatPaymentLine(store.shipments[number].payment)}` : '',
     ].filter(Boolean).join('\n'),
     menuOptions(msg)
   );
+}
+
+function createShipmentPaymentRecord(flowData, methodProperties) {
+  const data = flowData || {};
+
+  if (data.PaymentType === 'cod' || data.PaymentType === 'paymentControl') {
+    return {
+      type: data.PaymentType,
+      label: data.PaymentTypeLabel || getPaymentTypeLabel(data.PaymentType),
+      amount: data.PaymentAmount || getPaymentAmountFromProperties(methodProperties),
+      status: 'waiting',
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  const amount = getPaymentAmountFromProperties(methodProperties);
+
+  if (methodProperties.AfterpaymentOnGoodsCost) {
+    return {
+      type: 'paymentControl',
+      label: getPaymentTypeLabel('paymentControl'),
+      amount,
+      status: 'waiting',
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  if (amount) {
+    return {
+      type: 'cod',
+      label: getPaymentTypeLabel('cod'),
+      amount,
+      status: 'waiting',
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  return null;
+}
+
+function getPaymentAmountFromProperties(methodProperties) {
+  if (methodProperties.AfterpaymentOnGoodsCost) {
+    return methodProperties.AfterpaymentOnGoodsCost;
+  }
+
+  const deliveryData = Array.isArray(methodProperties.BackwardDeliveryData)
+    ? methodProperties.BackwardDeliveryData
+    : [];
+  const money = deliveryData.find((item) => item.CargoType === 'Money');
+
+  if (!money) {
+    return '';
+  }
+
+  return money.RedeliveryString || money.Amount || '';
 }
 
 async function handleDeleteCreatedTtn(msg, args) {
@@ -3523,8 +4914,9 @@ function menuKeyboard(msg) {
 
   const keyboard = [
     [BUTTONS.createTtn],
-    [BUTTONS.keys, BUTTONS.addKey],
-    [BUTTONS.addDefaultWarehouse],
+    [BUTTONS.myShipments, BUTTONS.payments],
+    [BUTTONS.returns],
+    [BUTTONS.accounts, BUTTONS.settings],
     [BUTTONS.logout],
   ];
 

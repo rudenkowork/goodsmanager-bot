@@ -37,6 +37,11 @@ const MAIN_CITY_BY_AREA = {
 const BUTTONS = {
   login: 'Увійти',
   createTtn: 'Створити ТТН',
+  myShipments: 'Мої відправки',
+  payments: 'Оплати',
+  returns: 'Повернення',
+  accounts: 'ФОПи / акаунти',
+  settings: 'Налаштування',
   keys: 'Кабінети НП',
   addKey: 'Додати кабінет',
   addDefaultWarehouse: 'Додати стандартне відділення',
@@ -47,6 +52,17 @@ const BUTTONS = {
   logout: 'Вийти',
   cancel: 'Скасувати',
   back: 'Назад',
+  today: 'Сьогодні',
+  chooseDate: 'Обрати дату',
+  byCabinet: 'По ФОПу',
+  allCabinets: 'Усі ФОПи',
+  allDates: 'Усі дати',
+  showSelected: 'Показати',
+  trackTtn: 'Відстежити ТТН',
+  allPayments: 'Усі оплати',
+  waitingPayments: 'Очікуються',
+  receivedPayments: 'Отримані',
+  allReturns: 'Усі повернення',
   nextPage: 'Наступна сторінка',
   previousPage: 'Попередня сторінка',
   skip: 'Пропустити',
@@ -65,6 +81,9 @@ const BUTTONS = {
   changeRecipientCity: 'Змінити місто отримувача',
   changeSenderCity: 'Змінити місто відправника',
   changeCabinet: 'Змінити кабінет НП',
+  withoutPaymentControl: 'Створити без контролю оплати',
+  useCashOnDelivery: 'Використати накладений платіж',
+  changePaymentAmount: 'Змінити суму оплати',
 };
 
 const SETTLEMENT_TYPE_CHOICES = [
@@ -97,6 +116,21 @@ const DELIVERY_TYPE_CHOICES = [
   },
 ];
 
+const PAYMENT_TYPE_CHOICES = [
+  {
+    label: 'Без оплати',
+    value: 'none',
+  },
+  {
+    label: 'Накладений платіж',
+    value: 'cod',
+  },
+  {
+    label: 'Контроль оплати',
+    value: 'paymentControl',
+  },
+];
+
 const CREATE_TTN_FIELDS = [
   {
     key: 'Description',
@@ -122,6 +156,17 @@ const CREATE_TTN_FIELDS = [
     prompt: 'Оберіть ПІБ і телефон відправника з кабінету.',
     senderContact: true,
     senderKey: 'Sender',
+  },
+  {
+    key: 'PaymentType',
+    prompt: 'Чи додаємо оплату при отриманні?',
+    options: PAYMENT_TYPE_CHOICES,
+  },
+  {
+    key: 'PaymentAmount',
+    prompt: 'Вкажіть суму оплати у грн.',
+    format: 'money',
+    paymentAmount: true,
   },
   {
     key: 'AreaSender',
@@ -183,6 +228,7 @@ module.exports = {
   CREATE_TTN_FIELDS,
   DELIVERY_TYPE_CHOICES,
   MAIN_CITY_BY_AREA,
+  PAYMENT_TYPE_CHOICES,
   POSTOMAT_TYPE_REFS,
   SETTLEMENT_TYPE_CHOICES,
   WAREHOUSE_SEARCH_LIMIT,

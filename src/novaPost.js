@@ -43,7 +43,64 @@ async function buildTtnProperties(apiKey, data) {
     methodProperties.RecipientAddressName = recipientAddressName;
   }
 
+  applyPaymentProperties(methodProperties, data);
   return methodProperties;
+}
+
+async function checkPaymentControlAvailable(apiKey, data, methodProperties) {
+  if (apiKey === 'MOCK') {
+    return true;
+  }
+
+  if (data.PaymentType !== 'paymentControl') {
+    return true;
+  }
+
+  if (data.Sender) {
+    try {
+      const response = await callNovaPost(apiKey, 'Counterparty', 'getCounterpartyOptions', {
+        Ref: data.Sender,
+      });
+      const item = response.data && response.data[0] ? response.data[0] : {};
+
+      if (item.CanAfterpaymentOnGoodsCost === true || item.CanAfterpaymentOnGoodsCost === 'true' || item.CanAfterpaymentOnGoodsCost === '1') {
+        return true;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(item, 'CanAfterpaymentOnGoodsCost')) {
+        return false;
+      }
+    } catch (error) {
+      if (isPaymentControlUnavailableError(error)) {
+        return false;
+      }
+    }
+  }
+
+  if (!data.PaymentAmount || !methodProperties) {
+    return true;
+  }
+
+  const probeProperties = {
+    CitySender: methodProperties.CitySender,
+    CityRecipient: await normalizeCityValue(apiKey, data.CityRecipient),
+    Weight: data.Weight,
+    ServiceType: methodProperties.ServiceType,
+    Cost: data.Cost,
+    CargoType: methodProperties.CargoType,
+    SeatsAmount: methodProperties.SeatsAmount,
+    AfterpaymentOnGoodsCost: data.PaymentAmount,
+  };
+
+  try {
+    await callNovaPost(apiKey, 'InternetDocument', 'getDocumentPrice', probeProperties);
+  } catch (error) {
+    if (isPaymentControlUnavailableError(error)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 async function callNovaPost(apiKey, modelName, calledMethod, methodProperties) {
@@ -94,6 +151,25 @@ async function callNovaPost(apiKey, modelName, calledMethod, methodProperties) {
   }
 
   return result;
+}
+
+async function getTrackingDocuments(apiKey, documents) {
+  const normalizedDocuments = documents
+    .map((document) => ({
+      DocumentNumber: String(document.number || document.DocumentNumber || '').replace(/\D/g, ''),
+      Phone: String(document.phone || document.Phone || '').replace(/\D/g, ''),
+    }))
+    .filter((document) => document.DocumentNumber);
+
+  if (!normalizedDocuments.length) {
+    return [];
+  }
+
+  const response = await callNovaPost(apiKey, 'TrackingDocument', 'getStatusDocuments', {
+    Documents: normalizedDocuments,
+  });
+
+  return response.data || [];
 }
 
 async function validateNovaPostApiKey(apiKey) {
@@ -183,6 +259,62 @@ function isNovaPostAddressDirectoryMethod(modelName, calledMethod) {
   return calledMethod === 'getAreas'
     || calledMethod === 'getCities'
     || calledMethod === 'getWarehouses';
+}
+
+function applyPaymentProperties(methodProperties, data) {
+  if (data.PaymentType === 'cod' && data.PaymentAmount) {
+    methodProperties.BackwardDeliveryData = [
+      {
+        PayerType: 'Recipient',
+        CargoType: 'Money',
+        RedeliveryString: data.PaymentAmount,
+      },
+    ];
+    return;
+  }
+
+  if (data.PaymentType === 'paymentControl' && data.PaymentAmount) {
+    methodProperties.AfterpaymentOnGoodsCost = data.PaymentAmount;
+  }
+}
+
+function isPaymentControlUnavailableError(error) {
+  const details = getNovaPostErrorDetails(error).toLowerCase();
+
+  if (details.includes('only moneytransfer or afterpayment enable')) {
+    return true;
+  }
+
+  return details.includes('afterpaymentongoodscost')
+    && (details.includes('недоступ')
+      || details.includes('unavailable')
+      || details.includes('afterpayment enable'));
+}
+
+function getNovaPostErrorDetails(error) {
+  const details = [];
+
+  if (Array.isArray(error.novaPostErrors)) {
+    details.push(...error.novaPostErrors);
+  }
+
+  if (Array.isArray(error.novaPostTranslatedErrors)) {
+    details.push(...error.novaPostTranslatedErrors);
+  }
+
+  if (Array.isArray(error.novaPostWarnings)) {
+    details.push(...error.novaPostWarnings);
+  }
+
+  if (Array.isArray(error.novaPostErrorCodes)) {
+    details.push(...error.novaPostErrorCodes);
+  }
+
+  if (!details.length && error.message) {
+    details.push(error.message);
+  }
+
+  return details.join('; ');
 }
 
 function mockNovaPost(modelName, calledMethod, methodProperties) {
@@ -296,8 +428,23 @@ function mockNovaPost(modelName, calledMethod, methodProperties) {
     };
   }
 
+  if (modelName === 'Counterparty' && calledMethod === 'getCounterpartyOptions') {
+    return {
+      success: true,
+      data: [
+        {
+          CanAfterpaymentOnGoodsCost: true,
+        },
+      ],
+      errors: [],
+      warnings: [],
+    };
+  }
+
   if (modelName === 'InternetDocument' && calledMethod === 'save') {
     const number = `2045${String(Date.now()).slice(-10)}`;
+    const redelivery = getMockRedelivery(methodProperties);
+
     return {
       success: true,
       data: [
@@ -306,6 +453,9 @@ function mockNovaPost(modelName, calledMethod, methodProperties) {
           IntDocNumber: number,
           CostOnSite: methodProperties.Cost || '500',
           EstimatedDeliveryDate: todayForNovaPost(),
+          AfterpaymentOnGoodsCost: methodProperties.AfterpaymentOnGoodsCost || '',
+          Redelivery: redelivery ? '1' : '0',
+          RedeliverySum: redelivery,
         },
       ],
       errors: [],
@@ -397,11 +547,19 @@ function mockTrackingItem(number) {
   }
 
   if (lastDigit === '4') {
-    return createMockTrackingItem(number, 'Отримано', '4');
+    const item = createMockTrackingItem(number, 'Отримано', '9');
+    item.PaymentStatus = 'Оплачено';
+    item.PaymentStatusDate = todayForNovaPost();
+    item.AmountPaid = '500';
+    return item;
   }
 
   if (lastDigit === '5') {
-    return createMockTrackingItem(number, 'Повернення відправлення', '5');
+    const item = createMockTrackingItem(number, 'Повернення відправлення', '106');
+    item.LightReturnNumber = `${number.slice(0, -2)}99`;
+    item.LastCreatedOnTheBasisNumber = item.LightReturnNumber;
+    item.UndeliveryReasonsSubtypeDescription = 'Відмова отримувача';
+    return item;
   }
 
   return createMockTrackingItem(number, 'Відправлення прямує до міста отримувача', '2');
@@ -414,14 +572,36 @@ function createMockTrackingItem(number, status, statusCode) {
     StatusCode: statusCode,
     WarehouseRecipient: 'Відділення №1: вул. Хрещатик, 1',
     ScheduledDeliveryDate: todayForNovaPost(),
+    PaymentStatus: '',
+    AmountPaid: '',
+    AmountToPay: '',
+    Redelivery: '0',
+    RedeliveryNum: '',
+    RedeliverySum: '',
   };
+}
+
+function getMockRedelivery(methodProperties) {
+  const deliveryData = Array.isArray(methodProperties.BackwardDeliveryData)
+    ? methodProperties.BackwardDeliveryData
+    : [];
+  const money = deliveryData.find((item) => item.CargoType === 'Money');
+
+  if (!money) {
+    return '';
+  }
+
+  return money.RedeliveryString || money.Amount || '';
 }
 
 module.exports = {
   NOVA_POST_ENDPOINT,
   buildTtnProperties,
   callNovaPost,
+  checkPaymentControlAvailable,
   firstDataItem,
+  getTrackingDocuments,
+  isPaymentControlUnavailableError,
   resolveCityRef,
   todayForNovaPost,
   validateNovaPostApiKey,
