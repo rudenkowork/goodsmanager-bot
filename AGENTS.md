@@ -65,7 +65,10 @@ kill PID
 
 ## Runtime Data
 
-Local runtime data lives in:
+Production runtime data lives in Neon/Postgres when `DATABASE_URL` is set.
+On production hosts, the bot must not silently use local JSON fallback unless `ALLOW_JSON_STORE_IN_PRODUCTION=true` is set for an emergency.
+
+Local fallback runtime data lives in:
 
 - `data/store.json`
 
@@ -73,7 +76,7 @@ Example empty structure lives in:
 
 - `data/store.example.json`
 
-`data/store.json` contains:
+The runtime store contains:
 
 - `config`: main admin username and Nova Poshta endpoint;
 - `users`: local bot users with password salt/hash;
@@ -86,7 +89,7 @@ Example empty structure lives in:
 - `flows`: active Telegram conversation flows;
 - `botMessagesByChat`: bot message ids used for chat cleanup.
 
-Be careful with `data/store.json`.
+Be careful with runtime data.
 
 - Do not expose real API keys.
 - Mask secrets in chat output.
@@ -95,11 +98,17 @@ Be careful with `data/store.json`.
 
 On Railway:
 
-- Use a Railway Volume for the JSON store until Neon/Postgres is added.
-- Preferred volume mount path is `/app/data`.
-- If mounting elsewhere, set `STORE_PATH`, for example `/data/store.json`.
+- Set `DATABASE_URL` to the Neon connection string with `sslmode=require`.
+- Use a Railway Volume only as a temporary JSON fallback or first-run migration source.
+- If mounting old JSON elsewhere, set `STORE_PATH`, for example `/data/store.json`.
 - Keep one replica only because Telegram polling must be single-process.
 - Keep Serverless off for polling mode.
+
+On Render:
+
+- Use webhook mode for free web services: `BOT_MODE=webhook`.
+- Set `DATABASE_URL` to the Neon connection string with `sslmode=require`.
+- Do not rely on local `data/store.json` for persistence on Render.
 
 ## Main Files
 
@@ -139,7 +148,9 @@ Keep `index.js` as the owner of chat flow, but do not put low-level infrastructu
 
 `src/store.js`
 
-- `data/store.json` creation.
+- Neon/Postgres store creation when `DATABASE_URL` is set.
+- Local `data/store.json` fallback when `DATABASE_URL` is not set.
+- First Postgres startup can seed from an existing JSON store.
 - Store read/write.
 - Active flow get/set/clear.
 - Saved default senders.
@@ -170,8 +181,8 @@ Keep `index.js` as the owner of chat flow, but do not put low-level infrastructu
 
 - Railway deployment settings.
 - Required variables.
-- Volume setup for temporary JSON persistence.
-- Notes for the later Neon migration.
+- Neon persistence setup.
+- Volume setup for optional JSON fallback or migration.
 
 ## Telegram UX Rules
 
@@ -280,7 +291,7 @@ Validate before saving or sending data to Nova Poshta.
 API key:
 
 - Validate before saving.
-- Keep invalid keys out of `data/store.json`.
+- Keep invalid keys out of the runtime store.
 
 Phone:
 
@@ -351,4 +362,4 @@ If a helper is reusable, technical, or easy to test separately, move it into `sr
 - Prefer `rg` for searching.
 - Use `apply_patch` for manual edits.
 - Do not create files with shell heredocs or `cat`.
-- After flow-structure changes, clear stale `createTtn` flows from `data/store.json` if needed.
+- After flow-structure changes, clear stale `createTtn` flows from the runtime store if needed.

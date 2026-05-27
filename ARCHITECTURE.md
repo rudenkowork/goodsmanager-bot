@@ -13,7 +13,7 @@ Keep in `index.js`:
 - Message text that belongs to a specific flow.
 - Small flow-specific helpers.
 
-Do not put low-level API clients, JSON-store plumbing, password hashing, or generic validators in `index.js`.
+Do not put low-level API clients, store plumbing, password hashing, or generic validators in `index.js`.
 
 ## Modules
 
@@ -45,11 +45,14 @@ Do not put low-level API clients, JSON-store plumbing, password hashing, or gene
 
 `src/store.js`
 
-- `data/store.json` creation, reading, and writing.
+- Store creation, reading, and writing.
+- Neon/Postgres persistence when `DATABASE_URL` is set.
+- Local JSON fallback through `data/store.json`, `STORE_PATH`, or `RAILWAY_VOLUME_MOUNT_PATH`.
+- Production hosts refuse local JSON fallback unless `ALLOW_JSON_STORE_IN_PRODUCTION=true`.
+- First Postgres startup can seed the database from an existing JSON store.
 - Active flow get/set/clear.
 - Saved default sender/contact pairs per local user and Nova Poshta cabinet.
 - Saved default sender branches per local user and Nova Poshta cabinet.
-- Railway Volume support through `STORE_PATH` or `RAILWAY_VOLUME_MOUNT_PATH`.
 
 `src/textUtils.js`
 
@@ -140,7 +143,9 @@ This checks `index.js` and every file in `src/`.
 - Default mode is polling, which is best for always-on workers such as Railway.
 - Render Free web services should use webhook mode so Telegram update requests can wake the sleeping service.
 - Required variable: `BOT_TOKEN`.
+- Production persistence variable: `DATABASE_URL`.
 - Optional variable: `MAIN_ADMIN_TELEGRAM_USERNAME`.
+- Emergency JSON fallback variable: `ALLOW_JSON_STORE_IN_PRODUCTION=true`.
 
 Polling mode:
 
@@ -163,6 +168,12 @@ WEBHOOK_BASE_URL=https://your-public-domain.example
 
 ## Railway
 
-- Use a Railway Volume for `store.json` until Neon/Postgres is added.
-- Recommended volume mount path: `/app/data`.
+- Use Neon/Postgres for production persistence by setting `DATABASE_URL`.
+- A Railway Volume is only needed as a temporary JSON fallback or first-run migration source.
 - Keep one replica only and keep Serverless off.
+
+## Render
+
+- Use webhook mode on free web services: `BOT_MODE=webhook`.
+- Set `DATABASE_URL` for Neon/Postgres persistence.
+- Do not rely on local JSON storage for durable Render data.

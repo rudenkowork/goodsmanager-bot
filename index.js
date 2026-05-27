@@ -35,6 +35,7 @@ const {
 } = require('./src/validators');
 const {
   clearFlow,
+  closeStore,
   ensureStoreFile,
   getFlow,
   readStore,
@@ -81,13 +82,8 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-ensureStoreFile({
-  mainAdminTelegramUsername: MAIN_ADMIN_TELEGRAM_USERNAME,
-  novaPostEndpoint: NOVA_POST_ENDPOINT,
-});
-
-const bot = new TelegramBot(BOT_TOKEN, { polling: !IS_WEBHOOK_MODE });
-const startedAt = new Date();
+let bot = null;
+let startedAt = null;
 const DEFAULT_SENDER_WAREHOUSE_FIELDS = [
   {
     key: 'AreaSender',
@@ -116,39 +112,6 @@ const DEFAULT_SENDER_WAREHOUSE_FIELDS = [
 const REPORT_LIMIT = 60;
 const KYIV_TIME_ZONE = 'Europe/Kiev';
 
-bot.setMyCommands([
-  { command: 'start', description: 'Відкрити головне меню' },
-  { command: 'menu', description: 'Показати панель дій' },
-  { command: 'help', description: 'Підказки по боту' },
-  { command: 'status', description: 'Статус бота' },
-  { command: 'shipments', description: 'Мої відправки' },
-  { command: 'payments', description: 'Оплати' },
-  { command: 'returns', description: 'Повернення' },
-  { command: 'trackttn', description: 'Відстежити ТТН' },
-  { command: 'stop', description: 'Зупинити поточну дію' },
-  { command: 'delttn', description: 'Видалити створену ТТН' },
-  { command: 'add_default_warehouse', description: 'Зберегти стандартне відділення' },
-]).catch((error) => {
-  console.error('Failed to set bot commands:', error.message);
-});
-
-bot.on('message', async (msg) => {
-  if (!msg.text) {
-    return;
-  }
-
-  try {
-    await handleMessage(msg);
-  } catch (error) {
-    console.error(error);
-    await sendText(msg.chat.id, formatUserErrorMessage(error));
-  }
-});
-
-bot.on('polling_error', (error) => {
-  console.error('Polling error:', error.message);
-});
-
 process.on('SIGINT', () => {
   shutdown('SIGINT');
 });
@@ -157,20 +120,68 @@ process.on('SIGTERM', () => {
   shutdown('SIGTERM');
 });
 
-console.log(`Goods Manager bot started in ${BOT_MODE} mode.`);
-startHttpServer();
-configureTelegramDelivery().catch((error) => {
-  console.error('Failed to configure Telegram delivery:', error.message);
-
-  if (IS_WEBHOOK_MODE) {
-    process.exit(1);
-  }
+start().catch((error) => {
+  console.error('Failed to start bot:', error.message);
+  process.exit(1);
 });
+
+async function start() {
+  await ensureStoreFile({
+    mainAdminTelegramUsername: MAIN_ADMIN_TELEGRAM_USERNAME,
+    novaPostEndpoint: NOVA_POST_ENDPOINT,
+  });
+
+  bot = new TelegramBot(BOT_TOKEN, { polling: !IS_WEBHOOK_MODE });
+  startedAt = new Date();
+
+  bot.setMyCommands([
+    { command: 'start', description: 'Відкрити головне меню' },
+    { command: 'menu', description: 'Показати панель дій' },
+    { command: 'help', description: 'Підказки по боту' },
+    { command: 'status', description: 'Статус бота' },
+    { command: 'shipments', description: 'Мої відправки' },
+    { command: 'payments', description: 'Оплати' },
+    { command: 'returns', description: 'Повернення' },
+    { command: 'trackttn', description: 'Відстежити ТТН' },
+    { command: 'stop', description: 'Зупинити поточну дію' },
+    { command: 'delttn', description: 'Видалити створену ТТН' },
+    { command: 'add_default_warehouse', description: 'Зберегти стандартне відділення' },
+  ]).catch((error) => {
+    console.error('Failed to set bot commands:', error.message);
+  });
+
+  bot.on('message', async (msg) => {
+    if (!msg.text) {
+      return;
+    }
+
+    try {
+      await handleMessage(msg);
+    } catch (error) {
+      console.error(error);
+      await sendText(msg.chat.id, formatUserErrorMessage(error));
+    }
+  });
+
+  bot.on('polling_error', (error) => {
+    console.error('Polling error:', error.message);
+  });
+
+  console.log(`Goods Manager bot started in ${BOT_MODE} mode.`);
+  startHttpServer();
+  configureTelegramDelivery().catch((error) => {
+    console.error('Failed to configure Telegram delivery:', error.message);
+
+    if (IS_WEBHOOK_MODE) {
+      process.exit(1);
+    }
+  });
+}
 
 async function shutdown(signal) {
   console.log(`Received ${signal}. Stopping bot.`);
 
-  if (!IS_WEBHOOK_MODE) {
+  if (!IS_WEBHOOK_MODE && bot) {
     try {
       await bot.stopPolling();
     } catch (error) {
@@ -184,6 +195,12 @@ async function shutdown(signal) {
     } catch (error) {
       console.error('Failed to stop HTTP server:', error.message);
     }
+  }
+
+  try {
+    await closeStore();
+  } catch (error) {
+    console.error('Failed to close store:', error.message);
   }
 
   process.exit(0);
@@ -1169,7 +1186,7 @@ async function handleLoginFlowInput(msg, flow, text) {
     loggedInAt: new Date().toISOString(),
   };
   delete store.flows[String(msg.from.id)];
-  writeStore(store);
+  await writeStore(store);
 
   await sendText(msg.chat.id, `Вхід виконано. Раді бачити Вас, ${login}!`, menuOptions(msg));
 }
@@ -1196,7 +1213,7 @@ async function handleAddUserFlowInput(msg, flow, text) {
 
   store.users[login] = createUserRecord(text, 'user');
   delete store.flows[String(msg.from.id)];
-  writeStore(store);
+  await writeStore(store);
 
   await sendText(msg.chat.id, `Готово, користувача створено: ${login}`, menuOptions(msg));
 }
@@ -1235,7 +1252,7 @@ async function handleAddKeyFlowInput(msg, flow, text) {
   };
   store.selectedApiKeyByUser[user.login] = alias;
   delete store.flows[String(msg.from.id)];
-  writeStore(store);
+  await writeStore(store);
 
   await sendText(
     msg.chat.id,
@@ -1462,7 +1479,7 @@ async function saveDefaultSenderWarehouse(msg, data) {
 
   store.defaultSenderWarehouses[user.login][alias].push(warehouse);
   delete store.flows[String(msg.from.id)];
-  writeStore(store);
+  await writeStore(store);
 
   await sendText(
     msg.chat.id,
@@ -2160,7 +2177,7 @@ async function refreshTrackingForEntries(store, entries) {
   }
 
   if (changed) {
-    writeStore(store);
+    await writeStore(store);
   }
 }
 
@@ -4302,7 +4319,7 @@ async function handleAdminSetup(msg, args) {
     loggedInAt: new Date().toISOString(),
   };
 
-  writeStore(store);
+  await writeStore(store);
   await sendText(msg.chat.id, `Готово, головного адміна створено: ${login}. Ви вже увійшли.`, menuOptions(msg));
 }
 
@@ -4327,7 +4344,7 @@ async function handleLogin(msg, args) {
     login,
     loggedInAt: new Date().toISOString(),
   };
-  writeStore(store);
+  await writeStore(store);
 
   await sendText(msg.chat.id, `Вхід виконано. Раді бачити Вас, ${login}!`, menuOptions(msg));
 }
@@ -4337,7 +4354,7 @@ async function handleLogout(msg) {
   const store = readStore();
   delete store.sessions[String(msg.from.id)];
   delete store.flows[String(msg.from.id)];
-  writeStore(store);
+  await writeStore(store);
 
   if (mainAdmin) {
     await sendText(
@@ -4370,7 +4387,7 @@ async function handleAddUser(msg, args) {
   }
 
   store.users[login] = createUserRecord(password, 'user');
-  writeStore(store);
+  await writeStore(store);
 
   await sendText(msg.chat.id, `Готово, користувача створено: ${login}`, menuOptions(msg));
 }
@@ -4405,7 +4422,7 @@ async function handleDeleteUser(msg, args) {
     }
   }
 
-  writeStore(store);
+  await writeStore(store);
   await sendText(msg.chat.id, `Готово, користувача видалено: ${login}`, menuOptions(msg));
 }
 
@@ -4462,7 +4479,7 @@ async function handleAddKey(msg, args) {
   };
   store.selectedApiKeyByUser[currentUser.login] = alias;
 
-  writeStore(store);
+  await writeStore(store);
   await sendText(msg.chat.id, `Готово, кабінет Нової пошти збережено як "${alias}".`, menuOptions(msg));
 }
 
@@ -4489,7 +4506,7 @@ async function handleDeleteKey(msg, args) {
     }
   }
 
-  writeStore(store);
+  await writeStore(store);
   await sendText(msg.chat.id, `Готово, кабінет видалено: ${alias}`, menuOptions(msg));
 }
 
@@ -4526,7 +4543,7 @@ async function handleUseKey(msg, args) {
   }
 
   store.selectedApiKeyByUser[user.login] = alias;
-  writeStore(store);
+  await writeStore(store);
 
   await sendText(msg.chat.id, `Обрано кабінет: ${alias}`, menuOptions(msg));
 }
@@ -4566,7 +4583,7 @@ async function createTtnFromProperties(msg, methodProperties, selectedKey, flowD
     },
     raw: item,
   };
-  writeStore(store);
+  await writeStore(store);
 
   await sendText(
     msg.chat.id,
@@ -4671,7 +4688,7 @@ async function handleDeleteCreatedTtn(msg, args) {
   });
 
   delete store.shipments[number];
-  writeStore(store);
+  await writeStore(store);
 
   await sendText(msg.chat.id, `ТТН ${number} видалено ✅`, menuOptions(msg));
 }

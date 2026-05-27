@@ -19,9 +19,13 @@ Open the service in Railway, then go to `Variables` and add:
 ```text
 BOT_TOKEN=<token from BotFather>
 MAIN_ADMIN_TELEGRAM_USERNAME=timarudy
+DATABASE_URL=<Neon connection string with sslmode=require>
 ```
 
 `MAIN_ADMIN_TELEGRAM_USERNAME` is optional. If omitted, the bot uses `timarudy`.
+Keep `DATABASE_URL` secret. Do not paste the real value into commits, logs, or screenshots.
+
+The app refuses to start on Railway without `DATABASE_URL`; this prevents accidental writes to temporary local JSON storage.
 
 ## Start Command
 
@@ -39,22 +43,24 @@ npm start
 
 Do not use a cron schedule for this bot.
 
-## Persistent JSON Storage For Now
+## Persistent Neon Storage
 
-For now the bot stores data in `data/store.json`.
+When `DATABASE_URL` is set, the bot stores the same data shape in Neon/Postgres in a `bot_store` table.
 
-To persist that file on Railway, attach a Railway Volume to this service.
+On first startup with an empty `bot_store` table, the app seeds Postgres from the existing JSON store if `data/store.json` or `STORE_PATH` exists. This keeps old users, sessions, API cabinets, default senders, shipments, flows, and cleanup message ids.
 
-Recommended simple setup:
+Use a Railway Volume only if you still need the JSON file as a temporary fallback or first-run migration source.
 
-1. In Railway, create or attach a Volume to the `goodsmanager-bot` service.
+Optional migration setup:
+
+1. Attach the old Volume to the `goodsmanager-bot` service.
 2. Set the volume mount path to:
 
 ```text
 /app/data
 ```
 
-The app writes to `./data/store.json`, and Railway places the app at `/app`, so `/app/data` makes the JSON store persistent.
+The app will read `/app/data/store.json` once when the Neon table has no row yet.
 
 Alternative setup:
 
@@ -70,7 +76,9 @@ Alternative setup:
 STORE_PATH=/data/store.json
 ```
 
-The app also supports Railway's automatic `RAILWAY_VOLUME_MOUNT_PATH` variable, but the explicit `STORE_PATH` is clearer.
+The app also supports Railway's automatic `RAILWAY_VOLUME_MOUNT_PATH` variable, but the explicit `STORE_PATH` is clearer for migration.
+
+After the first successful Neon startup, the Volume is no longer required for persistence.
 
 ## Railway Settings
 
@@ -92,14 +100,6 @@ In `Settings -> Networking`:
 
 - Public networking is not required for polling mode.
 
-## Later Neon Migration
+## Local JSON Fallback
 
-When moving to Neon/Postgres later:
-
-- keep Railway only for the bot worker;
-- add Neon connection string as `DATABASE_URL`;
-- move store reads/writes out of `src/store.js` into a database-backed store module;
-- migrate `users`, `sessions`, `apiKeys`, `selectedApiKeyByUser`, `shipments`, and `flows`.
-
-Until then, use the Railway Volume approach above.
-
+If `DATABASE_URL` is omitted, the bot writes to `data/store.json` locally. This is useful for development only; production should use Neon. For an emergency production fallback only, set `ALLOW_JSON_STORE_IN_PRODUCTION=true`.
