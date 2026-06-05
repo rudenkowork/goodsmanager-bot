@@ -147,6 +147,7 @@ function createEmptyStore(config = {}) {
     selectedApiKeyByUser: {},
     defaultSenders: {},
     defaultSenderWarehouses: {},
+    crmShopByTelegramUser: {},
     shipments: {},
     flows: {},
     botMessagesByChat: {},
@@ -178,6 +179,7 @@ function normalizeStore(store, config = {}) {
   ensureObject(normalized, 'selectedApiKeyByUser');
   ensureObject(normalized, 'defaultSenders');
   ensureObject(normalized, 'defaultSenderWarehouses');
+  ensureObject(normalized, 'crmShopByTelegramUser');
   ensureObject(normalized, 'shipments');
   ensureObject(normalized, 'flows');
   ensureObject(normalized, 'botMessagesByChat');

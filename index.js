@@ -43,6 +43,13 @@ const {
   writeStore,
 } = require('./src/store');
 const {
+  DEFAULT_SOURCE_LABEL,
+  isGoodsCrmConfigured,
+  normalizeGoodsCrmRefCode,
+  pushTtnToGoodsCrm,
+  resolveGoodsCrmShop,
+} = require('./src/goodsCrm');
+const {
   chunkText,
   maskSecret,
   normalizeAlias,
@@ -146,6 +153,7 @@ async function start() {
     { command: 'stop', description: 'Зупинити поточну дію' },
     { command: 'delttn', description: 'Видалити створену ТТН' },
     { command: 'add_default_warehouse', description: 'Зберегти стандартне відділення' },
+    { command: 'crmshop', description: 'Підключити магазин GoodsCRM' },
   ]).catch((error) => {
     console.error('Failed to set bot commands:', error.message);
   });
@@ -533,6 +541,11 @@ async function handleMessage(msg) {
     return;
   }
 
+  if (command === '/crmshop') {
+    await handleGoodsCrmShopCommand(msg, args);
+    return;
+  }
+
   if (command === '/delkey') {
     await handleDeleteKey(msg, args);
     return;
@@ -629,7 +642,9 @@ async function sendHelp(msg) {
     `↩ ${BUTTONS.returns} - покажу повернення та звʼязок із початковою ТТН.`,
     `🔑 ${BUTTONS.addKey} - збережемо API-ключ із кабінету Нової пошти.`,
     `🏤 ${BUTTONS.addDefaultWarehouse} - збережемо відділення відправника для швидких ТТН.`,
+    `🏬 ${BUTTONS.goodsCrmShop} - підключимо магазин GoodsCRM за Telegram-кодом.`,
     `🗂 ${BUTTONS.keys} - покажу збережені кабінети.`,
+    '/crmshop код - підключити магазин GoodsCRM.',
     '/trackttn номер - оновити статус однієї ТТН.',
     '/delttn номер - видалити створену в боті ТТН.',
     '/stop - зупинити поточну дію й почати заново.',
@@ -647,6 +662,27 @@ async function sendHelp(msg) {
   await sendText(msg.chat.id, lines.join('\n'), menuOptions(msg));
 }
 
+async function sendAboutBot(msg) {
+  await sendText(
+    msg.chat.id,
+    [
+      'Я допомагаю менеджерам працювати з відправками Нової пошти без зайвих ручних дій.',
+      '',
+      'Що вмію:',
+      '📦 створювати ТТН у покроковому чаті;',
+      '📋 показувати створені відправки та оновлювати статуси;',
+      '💳 контролювати накладені платежі;',
+      '↩ показувати повернення й повʼязані ТТН;',
+      '🔑 зберігати кілька кабінетів Нової пошти;',
+      '🏤 запамʼятовувати стандартні відділення відправника;',
+      '👥 допомагати адміну керувати користувачами.',
+      '',
+      'Оберіть потрібну дію на панелі нижче, і я проведу Вас крок за кроком 🙂',
+    ].join('\n'),
+    menuOptions(msg)
+  );
+}
+
 async function sendBotStatus(msg) {
   const uptimeSeconds = Math.floor((Date.now() - startedAt.getTime()) / 1000);
   const user = getSessionUser(msg);
@@ -662,6 +698,10 @@ async function sendBotStatus(msg) {
 function formatUserErrorMessage(error) {
   if (error && error.isNovaPostApiError) {
     return getFriendlyNovaPostApiMessage(error);
+  }
+
+  if (error && error.isGoodsCrmError) {
+    return getFriendlyGoodsCrmMessage(error);
   }
 
   const message = error && error.message ? error.message : 'невідома помилка';
@@ -716,6 +756,16 @@ async function handleMenuButton(msg, text) {
 
   if (text === BUTTONS.addDefaultWarehouse) {
     await startDefaultSenderWarehouseFlow(msg);
+    return;
+  }
+
+  if (text === BUTTONS.goodsCrmShop) {
+    await startGoodsCrmShopFlow(msg);
+    return;
+  }
+
+  if (text === BUTTONS.aboutBot) {
+    await sendAboutBot(msg);
     return;
   }
 
@@ -819,6 +869,31 @@ async function startDefaultSenderWarehouseFlow(msg) {
     msg.chat.id,
     'Для якого кабінету зберегти стандартне відділення?',
     keyboardOptions(makeButtonRows(aliases, 2, true))
+  );
+}
+
+async function startGoodsCrmShopFlow(msg) {
+  assertLoggedIn(msg);
+
+  if (!isGoodsCrmConfigured()) {
+    await sendText(
+      msg.chat.id,
+      'Інтеграція з GoodsCRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.',
+      menuOptions(msg)
+    );
+    return;
+  }
+
+  setFlow(msg, {
+    type: 'goodsCrmShop',
+    step: 0,
+    data: {},
+  });
+
+  await sendText(
+    msg.chat.id,
+    'Введіть Код Telegram із картки магазину в GoodsCRM.',
+    textInputOptions()
   );
 }
 
@@ -985,6 +1060,7 @@ async function startSettingsMenu(msg) {
     'Налаштування: оберіть дію.',
     keyboardOptions([
       [BUTTONS.addDefaultWarehouse],
+      [BUTTONS.goodsCrmShop],
       [BUTTONS.cities, BUTTONS.warehouses],
       [BUTTONS.logout],
       [BUTTONS.back, BUTTONS.cancel],
@@ -1010,6 +1086,11 @@ async function handleFlowInput(msg, flow, text) {
 
   if (flow.type === 'defaultSenderWarehouse') {
     await handleDefaultSenderWarehouseFlowInput(msg, flow, text);
+    return;
+  }
+
+  if (flow.type === 'goodsCrmShop') {
+    await handleGoodsCrmShopFlowInput(msg, flow, text);
     return;
   }
 
@@ -1259,6 +1340,74 @@ async function handleAddKeyFlowInput(msg, flow, text) {
     `Готово, кабінет "${alias}" збережено. Якщо це єдиний кабінет, я використаю його для ТТН автоматично.`,
     menuOptions(msg)
   );
+}
+
+async function handleGoodsCrmShopFlowInput(msg, flow, text) {
+  await connectGoodsCrmShop(msg, text, {
+    keepFlowOnInvalidCode: true,
+  });
+}
+
+async function connectGoodsCrmShop(msg, refCodeInput, options = {}) {
+  const user = assertLoggedIn(msg);
+  const refCode = normalizeGoodsCrmRefCode(refCodeInput);
+
+  if (!isGoodsCrmConfigured()) {
+    clearFlow(msg);
+    await sendText(
+      msg.chat.id,
+      'Інтеграція з GoodsCRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.',
+      menuOptions(msg)
+    );
+    return;
+  }
+
+  if (!refCode) {
+    await sendText(msg.chat.id, 'Введіть Код Telegram із картки магазину в GoodsCRM.', textInputOptions());
+    return;
+  }
+
+  try {
+    const shop = await resolveGoodsCrmShop(refCode);
+    const store = readStore();
+
+    store.crmShopByTelegramUser[String(msg.from.id)] = {
+      telegramUserId: msg.from.id,
+      crmShopId: shop.id || '',
+      refCode: shop.refCode || refCode,
+      shopName: shop.name || '',
+      connectedBy: user.login,
+      connectedAt: new Date().toISOString(),
+    };
+    delete store.flows[String(msg.from.id)];
+    await writeStore(store);
+
+    await sendText(
+      msg.chat.id,
+      [
+        'Готово, магазин GoodsCRM підключено ✅',
+        `Магазин: ${shop.name || shop.refCode || refCode}`,
+        'Нові ТТН я передаватиму в CRM автоматично.',
+      ].join('\n'),
+      menuOptions(msg)
+    );
+  } catch (error) {
+    if (isGoodsCrmShopNotFound(error)) {
+      if (!options.keepFlowOnInvalidCode) {
+        clearFlow(msg);
+      }
+
+      await sendText(
+        msg.chat.id,
+        'Не знайшов магазин із таким кодом. Перевірте Код Telegram у GoodsCRM і введіть його ще раз.',
+        options.keepFlowOnInvalidCode ? textInputOptions() : menuOptions(msg)
+      );
+      return;
+    }
+
+    clearFlow(msg);
+    throw error;
+  }
 }
 
 async function handleDefaultSenderWarehouseFlowInput(msg, flow, text) {
@@ -1879,6 +2028,11 @@ async function handleSettingsMenuInput(msg, text) {
 
   if (text === BUTTONS.addDefaultWarehouse) {
     await startDefaultSenderWarehouseFlow(msg);
+    return;
+  }
+
+  if (text === BUTTONS.goodsCrmShop) {
+    await startGoodsCrmShopFlow(msg);
     return;
   }
 
@@ -4260,6 +4414,36 @@ function getFriendlyNovaPostApiMessage(error) {
   return 'Нова пошта не прийняла запит. Перевірте дані й спробуйте ще раз.';
 }
 
+function getFriendlyGoodsCrmMessage(error) {
+  const code = error && error.goodsCrmCode ? error.goodsCrmCode : '';
+
+  if (code === 'not_configured') {
+    return 'Інтеграція з GoodsCRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.';
+  }
+
+  if (code === 'unauthorized') {
+    return 'GoodsCRM не прийняла запит авторизації. Напишіть адміну, щоб перевірити секрет інтеграції.';
+  }
+
+  if (isGoodsCrmShopNotFound(error)) {
+    return 'Не знайшов магазин із таким Кодом Telegram. Перевірте код у GoodsCRM і спробуйте ще раз.';
+  }
+
+  if (code === 'invalid_request' || code === 'empty_ttns') {
+    return 'GoodsCRM не прийняла дані запиту. Перевірте код магазину й спробуйте ще раз.';
+  }
+
+  return 'GoodsCRM зараз не прийняла запит. Спробуйте ще раз або зверніться до адміна.';
+}
+
+function isGoodsCrmShopNotFound(error) {
+  if (!error) {
+    return false;
+  }
+
+  return error.goodsCrmCode === 'shop_not_found' || error.statusCode === 404;
+}
+
 function getNovaPostErrorDetails(error) {
   const details = [];
 
@@ -4548,18 +4732,31 @@ async function handleUseKey(msg, args) {
   await sendText(msg.chat.id, `Обрано кабінет: ${alias}`, menuOptions(msg));
 }
 
+async function handleGoodsCrmShopCommand(msg, args) {
+  assertLoggedIn(msg);
+
+  if (!args.trim()) {
+    await startGoodsCrmShopFlow(msg);
+    return;
+  }
+
+  await connectGoodsCrmShop(msg, args, {
+    keepFlowOnInvalidCode: false,
+  });
+}
+
 async function createTtnFromProperties(msg, methodProperties, selectedKey, flowData) {
   const user = assertLoggedIn(msg);
   const key = selectedKey || getSelectedApiKey(msg);
   const response = await callNovaPost(key.apiKey, 'InternetDocument', 'save', methodProperties);
   const item = firstDataItem(response);
   const number = item.IntDocNumber || item.Number || item.DocumentNumber || 'без номера у відповіді';
+  const createdAt = new Date().toISOString();
   const store = readStore();
-
-  store.shipments[number] = {
+  const shipment = {
     apiKeyAlias: key.alias,
     createdBy: user.login,
-    createdAt: new Date().toISOString(),
+    createdAt,
     ref: item.Ref || '',
     description: methodProperties.Description || '',
     weight: methodProperties.Weight || '',
@@ -4579,11 +4776,15 @@ async function createTtnFromProperties(msg, methodProperties, selectedKey, flowD
       code: '',
       text: 'Створено, очікує передачі до Нової пошти',
       deliveryPoint: flowData && flowData.RecipientAddressNameDescription || '',
-      updatedAt: new Date().toISOString(),
+      updatedAt: createdAt,
     },
     raw: item,
   };
+
+  store.shipments[number] = shipment;
   await writeStore(store);
+
+  const goodsCrmLine = await syncCreatedShipmentToGoodsCrm(msg, number, shipment);
 
   await sendText(
     msg.chat.id,
@@ -4591,10 +4792,121 @@ async function createTtnFromProperties(msg, methodProperties, selectedKey, flowD
       'ТТН створено ✅',
       `Номер: ${number}`,
       `Кабінет: ${key.alias}`,
-      store.shipments[number].payment ? `Оплата: ${formatPaymentLine(store.shipments[number].payment)}` : '',
+      shipment.payment ? `Оплата: ${formatPaymentLine(shipment.payment)}` : '',
+      goodsCrmLine,
     ].filter(Boolean).join('\n'),
     menuOptions(msg)
   );
+}
+
+async function syncCreatedShipmentToGoodsCrm(msg, number, shipment) {
+  if (!isGoodsCrmConfigured()) {
+    return '';
+  }
+
+  const mapping = getGoodsCrmShopMapping(msg);
+
+  if (!mapping || !mapping.refCode) {
+    await updateShipmentGoodsCrmStatus(number, {
+      status: 'not_connected',
+      updatedAt: new Date().toISOString(),
+    });
+    return `GoodsCRM: магазин не підключено. Додайте "${BUTTONS.goodsCrmShop}" у налаштуваннях.`;
+  }
+
+  try {
+    const result = await pushTtnToGoodsCrm({
+      refCode: mapping.refCode,
+      ttns: [
+        createGoodsCrmTtnPayload(msg, number, shipment),
+      ],
+    });
+    const shop = result.shop || {};
+    const shopName = shop.name || mapping.shopName || '';
+    const refCode = shop.refCode || mapping.refCode;
+
+    await updateShipmentGoodsCrmStatus(number, {
+      status: 'synced',
+      refCode,
+      crmShopId: shop.id || mapping.crmShopId || '',
+      shopName,
+      assignedCount: result.assignedCount || 0,
+      pushedAt: new Date().toISOString(),
+    });
+
+    return `GoodsCRM: передано в ${shopName || refCode}.`;
+  } catch (error) {
+    console.error(`GoodsCRM TTN sync failed for ${number}:`, error.message);
+    await updateShipmentGoodsCrmStatus(number, {
+      status: 'failed',
+      refCode: mapping.refCode,
+      crmShopId: mapping.crmShopId || '',
+      shopName: mapping.shopName || '',
+      errorCode: error.goodsCrmCode || 'request_failed',
+      errorMessage: getGoodsCrmErrorSummary(error),
+      errorAt: new Date().toISOString(),
+    });
+
+    return 'GoodsCRM: ТТН створена, але CRM поки не прийняла її. Перевірте код магазину або зверніться до адміна.';
+  }
+}
+
+function getGoodsCrmShopMapping(msg) {
+  const store = readStore();
+  return store.crmShopByTelegramUser[String(msg.from.id)] || null;
+}
+
+async function updateShipmentGoodsCrmStatus(number, crm) {
+  const store = readStore();
+
+  if (!store.shipments[number]) {
+    return;
+  }
+
+  store.shipments[number].crm = crm;
+  await writeStore(store);
+}
+
+function createGoodsCrmTtnPayload(msg, number, shipment) {
+  return {
+    ttn: number,
+    sourceLabel: DEFAULT_SOURCE_LABEL,
+    createdBy: formatGoodsCrmCreatedBy(msg, shipment.createdBy),
+    createdAt: shipment.createdAt,
+    description: shipment.description || '',
+    recipientName: shipment.recipientName || shipment.recipientContactName || '',
+    recipientPhone: formatGoodsCrmPhone(shipment.recipientPhone),
+    recipientCity: shipment.recipientCity || '',
+    recipientDeliveryPoint: shipment.recipientDeliveryPoint || '',
+  };
+}
+
+function formatGoodsCrmCreatedBy(msg, fallback) {
+  const username = msg.from && msg.from.username ? String(msg.from.username).trim() : '';
+
+  if (username) {
+    return `@${username.replace(/^@/, '')}`;
+  }
+
+  return fallback || `telegram:${msg.from.id}`;
+}
+
+function formatGoodsCrmPhone(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+
+  if (digits.length === 12 && digits.startsWith('380')) {
+    return `+${digits}`;
+  }
+
+  return String(value || '');
+}
+
+function getGoodsCrmErrorSummary(error) {
+  if (!error) {
+    return 'unknown_error';
+  }
+
+  return error.goodsCrmCode || error.message || 'request_failed';
 }
 
 function createShipmentPaymentRecord(flowData, methodProperties) {
@@ -4937,6 +5249,7 @@ function menuKeyboard(msg) {
   if (!user) {
     return [
       [BUTTONS.login],
+      [BUTTONS.aboutBot],
     ];
   }
 
@@ -4945,6 +5258,7 @@ function menuKeyboard(msg) {
     [BUTTONS.myShipments, BUTTONS.payments],
     [BUTTONS.returns],
     [BUTTONS.accounts, BUTTONS.settings],
+    [BUTTONS.aboutBot],
     [BUTTONS.logout],
   ];
 

@@ -45,6 +45,8 @@ const BUTTONS = {
   keys: 'Кабінети НП',
   addKey: 'Додати кабінет',
   addDefaultWarehouse: 'Додати стандартне відділення',
+  goodsCrmShop: 'Код GoodsCRM',
+  aboutBot: 'Про бота',
   cities: 'Знайти місто',
   warehouses: 'Знайти відділення',
   addUser: 'Додати користувача',

@@ -43,6 +43,12 @@ Do not put low-level API clients, store plumbing, password hashing, or generic v
 - Tracking status requests.
 - Address directory helpers.
 
+`src/goodsCrm.js`
+
+- GoodsCRM bot-ingest API calls.
+- Shop Telegram-code resolution.
+- Created TTN push requests with the configured bot secret.
+
 `src/store.js`
 
 - Store creation, reading, and writing.
@@ -53,6 +59,7 @@ Do not put low-level API clients, store plumbing, password hashing, or generic v
 - Active flow get/set/clear.
 - Saved default sender/contact pairs per local user and Nova Poshta cabinet.
 - Saved default sender branches per local user and Nova Poshta cabinet.
+- GoodsCRM shop mapping by Telegram user id.
 
 `src/textUtils.js`
 
@@ -123,6 +130,14 @@ Created TTNs are stored in `store.shipments[number]` with the original cabinet a
 
 Tracking uses `TrackingDocument/getStatusDocuments` grouped by Nova Poshta cabinet. Payment and return sections reuse the latest tracking fields instead of storing full raw tracking responses.
 
+GoodsCRM integration:
+
+1. A logged-in user enters the shop `Код Telegram` through `Код GoodsCRM` in settings or `/crmshop code`.
+2. The bot resolves the code through `POST /api/bot/shops/resolve`.
+3. The bot stores the Telegram-user-to-shop mapping in `crmShopByTelegramUser`.
+4. After a TTN is created in Nova Poshta and saved locally, the bot sends it to `POST /api/bot/ttns` with the saved `refCode`.
+5. CRM sync success or failure is stored on the shipment as `shipment.crm`; CRM errors do not undo Nova Poshta TTN creation.
+
 ## Validation
 
 - Validate Nova Poshta API keys before saving them. Do not keep a key if Nova Poshta rejects it.
@@ -145,6 +160,7 @@ This checks `index.js` and every file in `src/`.
 - Required variable: `BOT_TOKEN`.
 - Production persistence variable: `DATABASE_URL`.
 - Optional variable: `MAIN_ADMIN_TELEGRAM_USERNAME`.
+- GoodsCRM variables: `GOODSCRM_BASE_URL` and `BOT_INGEST_SECRET`.
 - Emergency JSON fallback variable: `ALLOW_JSON_STORE_IN_PRODUCTION=true`.
 
 Polling mode:

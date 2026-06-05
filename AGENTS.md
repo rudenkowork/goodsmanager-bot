@@ -85,6 +85,7 @@ The runtime store contains:
 - `selectedApiKeyByUser`: selected cabinet per local bot user;
 - `defaultSenders`: saved sender/contact pairs per local bot user and cabinet;
 - `defaultSenderWarehouses`: saved sender branches per local bot user and cabinet;
+- `crmShopByTelegramUser`: Telegram user id to GoodsCRM shop mapping;
 - `shipments`: created TTNs and raw API responses;
 - `flows`: active Telegram conversation flows;
 - `botMessagesByChat`: bot message ids used for chat cleanup.
@@ -138,6 +139,12 @@ Keep `index.js` as the owner of chat flow, but do not put low-level infrastructu
 - API key validation.
 - TTN `methodProperties` builder.
 - Address directory helpers.
+
+`src/goodsCrm.js`
+
+- GoodsCRM API client for bot-ingest endpoints.
+- Telegram shop code resolution.
+- Created TTN push requests.
 
 `src/auth.js`
 
@@ -345,6 +352,7 @@ When adding code:
 - Put Telegram conversation behavior in `index.js`.
 - Put stable field order and labels in `src/createTtnConfig.js`.
 - Put Nova Poshta request logic in `src/novaPost.js`.
+- Put GoodsCRM request logic in `src/goodsCrm.js`.
 - Put generic input checks in `src/validators.js`.
 - Put store access in `src/store.js`.
 - Put auth/session logic in `src/auth.js`.

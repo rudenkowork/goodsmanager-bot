@@ -20,10 +20,13 @@ Open the service in Railway, then go to `Variables` and add:
 BOT_TOKEN=<token from BotFather>
 MAIN_ADMIN_TELEGRAM_USERNAME=timarudy
 DATABASE_URL=<Neon connection string with sslmode=require>
+GOODSCRM_BASE_URL=<GoodsCRM app URL>
+BOT_INGEST_SECRET=<same secret as the CRM server>
 ```
 
 `MAIN_ADMIN_TELEGRAM_USERNAME` is optional. If omitted, the bot uses `timarudy`.
 Keep `DATABASE_URL` secret. Do not paste the real value into commits, logs, or screenshots.
+Keep `BOT_INGEST_SECRET` secret too. It must match the CRM server variable with the same name.
 
 The app refuses to start on Railway without `DATABASE_URL`; this prevents accidental writes to temporary local JSON storage.
 

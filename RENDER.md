@@ -14,6 +14,8 @@ MAIN_ADMIN_TELEGRAM_USERNAME=timarudy
 DATABASE_URL=<Neon connection string with sslmode=require>
 BOT_MODE=webhook
 WEBHOOK_SECRET=<long random value with letters, numbers, underscores, or dashes>
+GOODSCRM_BASE_URL=<GoodsCRM app URL>
+BOT_INGEST_SECRET=<same secret as the CRM server>
 ```
 
 `WEBHOOK_BASE_URL` is optional on Render because Render provides `RENDER_EXTERNAL_URL` automatically for web services. Add it only if you use a custom domain:
@@ -23,6 +25,7 @@ WEBHOOK_BASE_URL=https://your-domain.example
 ```
 
 Keep `DATABASE_URL` secret. When it is set, the bot stores runtime data in Neon/Postgres. Without it, the bot falls back to local `data/store.json`, which is not durable on free ephemeral hosts.
+Keep `BOT_INGEST_SECRET` secret too. It must match the CRM server variable with the same name.
 
 The app refuses to start on Render without `DATABASE_URL`; this prevents accidental writes to ephemeral local storage.
 
