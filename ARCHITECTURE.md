@@ -52,14 +52,12 @@ Do not put low-level API clients, store plumbing, password hashing, or generic v
 `src/store.js`
 
 - Store creation, reading, and writing.
-- Neon/Postgres persistence when `DATABASE_URL` is set.
-- Local JSON fallback through `data/store.json`, `STORE_PATH`, or `RAILWAY_VOLUME_MOUNT_PATH`.
-- Production hosts refuse local JSON fallback unless `ALLOW_JSON_STORE_IN_PRODUCTION=true`.
-- First Postgres startup can seed the database from an existing JSON store.
+- Local JSON cache through `data/store.json`, `STORE_PATH`, or `RAILWAY_VOLUME_MOUNT_PATH`.
+- Telegram UX/session state only. The CRM is the canonical database for shops, TTNs, FOP records, permissions, and audit history.
 - Active flow get/set/clear.
 - Saved default sender/contact pairs per local user and Nova Poshta cabinet.
 - Saved default sender branches per local user and Nova Poshta cabinet.
-- GoodsCRM shop mapping by Telegram user id.
+- GoodsCRM shop mapping by Telegram user id plus chat id.
 
 `src/textUtils.js`
 
@@ -134,9 +132,10 @@ GoodsCRM integration:
 
 1. A logged-in user enters the shop `Код Telegram` through `Код GoodsCRM` in settings or `/crmshop code`.
 2. The bot resolves the code through `POST /api/bot/shops/resolve`.
-3. The bot stores the Telegram-user-to-shop mapping in `crmShopByTelegramUser`.
-4. After a TTN is created in Nova Poshta and saved locally, the bot sends it to `POST /api/bot/ttns` with the saved `refCode`, cabinet alias, and sender details.
-5. CRM sync success or failure is stored on the shipment as `shipment.crm`; CRM errors do not undo Nova Poshta TTN creation.
+3. The bot posts the optional Telegram identity link to `POST /api/bot/telegram-links` and stores a local cache under `telegramUserId:chatId`.
+4. After a TTN is created in Nova Poshta and saved locally, the bot sends it to `POST /api/bot/ttns` with the saved `refCode`, optional `fopId`/`fopName`, and sender details.
+5. A user can also submit one or many ready TTN numbers through `/crmttn` or `Передати ТТН у CRM`; the bot reuses the linked `refCode`.
+6. CRM sync success or failure is stored on the shipment as `shipment.crm`; CRM errors do not undo Nova Poshta TTN creation.
 
 ## Validation
 
@@ -158,10 +157,10 @@ This checks `index.js` and every file in `src/`.
 - Default mode is polling, which is best for always-on workers such as Railway.
 - Render Free web services should use webhook mode so Telegram update requests can wake the sleeping service.
 - Required variable: `BOT_TOKEN`.
-- Production persistence variable: `DATABASE_URL`.
 - Optional variable: `MAIN_ADMIN_TELEGRAM_USERNAME`.
 - GoodsCRM variables: `GOODSCRM_BASE_URL` and `BOT_INGEST_SECRET`.
-- Emergency JSON fallback variable: `ALLOW_JSON_STORE_IN_PRODUCTION=true`.
+- Optional local cache path: `STORE_PATH`.
+- Do not set `DATABASE_URL` in the bot service. The CRM owns the Neon/Postgres database, and the bot talks to it only through `/api/bot/*`.
 
 Polling mode:
 
@@ -184,12 +183,12 @@ WEBHOOK_BASE_URL=https://your-public-domain.example
 
 ## Railway
 
-- Use Neon/Postgres for production persistence by setting `DATABASE_URL`.
-- A Railway Volume is only needed as a temporary JSON fallback or first-run migration source.
+- Do not set `DATABASE_URL` for this bot.
+- Use a Railway Volume only if the bot needs durable local Telegram UX/cache state across deploys.
 - Keep one replica only and keep Serverless off.
 
 ## Render
 
 - Use webhook mode on free web services: `BOT_MODE=webhook`.
-- Set `DATABASE_URL` for Neon/Postgres persistence.
-- Do not rely on local JSON storage for durable Render data.
+- Do not set `DATABASE_URL` for this bot.
+- Render's ephemeral filesystem can lose the bot's local cache; CRM data remains durable because it is written through the CRM API.

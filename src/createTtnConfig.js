@@ -46,6 +46,7 @@ const BUTTONS = {
   addKey: 'Додати кабінет',
   addDefaultWarehouse: 'Додати стандартне відділення',
   goodsCrmShop: 'Код GoodsCRM',
+  sendGoodsCrmTtn: 'Передати ТТН у CRM',
   aboutBot: 'Про бота',
   cities: 'Знайти місто',
   warehouses: 'Знайти відділення',

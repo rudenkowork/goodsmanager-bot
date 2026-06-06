@@ -1,7 +1,13 @@
 const DEFAULT_SOURCE_LABEL = 'Telegram bot';
 
 function isGoodsCrmConfigured() {
-  return Boolean(getGoodsCrmConfig().baseUrl);
+  const config = getGoodsCrmConfig();
+
+  if (!config.baseUrl) {
+    return false;
+  }
+
+  return !isProductionRuntime() || Boolean(config.secret);
 }
 
 function getGoodsCrmConfig() {
@@ -26,7 +32,25 @@ async function resolveGoodsCrmShop(refCode) {
     throw createGoodsCrmError('shop_not_found', 'Shop ref code not found');
   }
 
-  return result.shop || null;
+  return {
+    shop: result.shop || null,
+    defaultFop: normalizeGoodsCrmFop(result.defaultFop),
+  };
+}
+
+async function linkTelegramToGoodsCrmShop(payload) {
+  const refCode = normalizeGoodsCrmRefCode(payload && payload.refCode);
+
+  if (!refCode) {
+    throw createGoodsCrmError('missing_ref_code', 'GoodsCRM shop code is missing.');
+  }
+
+  return callGoodsCrm('/api/bot/telegram-links', {
+    telegramUserId: String(payload.telegramUserId || ''),
+    chatId: String(payload.chatId || ''),
+    username: String(payload.username || ''),
+    refCode,
+  });
 }
 
 async function pushTtnToGoodsCrm(payload) {
@@ -41,6 +65,10 @@ async function pushTtnToGoodsCrm(payload) {
     throw createGoodsCrmError('empty_ttns', 'GoodsCRM TTN payload is empty.');
   }
 
+  if (ttns.length > 100) {
+    throw createGoodsCrmError('too_many_ttns', 'GoodsCRM accepts at most 100 TTNs per request.');
+  }
+
   return callGoodsCrm('/api/bot/ttns', {
     refCode,
     ttns,
@@ -52,6 +80,10 @@ async function callGoodsCrm(path, payload) {
 
   if (!config.baseUrl) {
     throw createGoodsCrmError('not_configured', 'GoodsCRM base URL is not configured.');
+  }
+
+  if (isProductionRuntime() && !config.secret) {
+    throw createGoodsCrmError('not_configured', 'GoodsCRM bot secret is not configured.');
   }
 
   const response = await fetch(`${config.baseUrl}${path}`, {
@@ -75,6 +107,7 @@ function getGoodsCrmHeaders(config) {
 
   if (config.secret) {
     headers['x-bot-secret'] = config.secret;
+    headers.Authorization = `Bearer ${config.secret}`;
   }
 
   return headers;
@@ -113,12 +146,46 @@ function normalizeGoodsCrmErrorCode(message, statusCode) {
     return 'unauthorized';
   }
 
-  if (statusCode === 404 || normalized.includes('not found') || normalized.includes('shop_not_found')) {
-    return 'shop_not_found';
+  if (normalized.includes('fop_not_found')) {
+    return 'fop_not_found';
+  }
+
+  if (normalized.includes('fop_client_mismatch')) {
+    return 'fop_client_mismatch';
+  }
+
+  if (normalized.includes('fop_not_assigned_to_shop')) {
+    return 'fop_not_assigned_to_shop';
+  }
+
+  if (normalized.includes('fop_ambiguous')) {
+    return 'fop_ambiguous';
+  }
+
+  if (normalized.includes('fop_required')) {
+    return 'fop_required';
+  }
+
+  if (normalized.includes('telegram_identity_required')) {
+    return 'telegram_identity_required';
+  }
+
+  if (normalized.includes('method_not_allowed')) {
+    return 'method_not_allowed';
   }
 
   if (normalized.includes('empty_ttns')) {
     return 'empty_ttns';
+  }
+
+  if (normalized.includes('shop_not_found')
+    || normalized.includes('shop ref code not found')
+    || normalized.includes('shop code not found')) {
+    return 'shop_not_found';
+  }
+
+  if (statusCode === 404) {
+    return 'not_found';
   }
 
   if (statusCode === 400) {
@@ -132,8 +199,27 @@ function normalizeBaseUrl(value) {
   return String(value || '').trim().replace(/\/+$/, '');
 }
 
+function isProductionRuntime() {
+  return process.env.NODE_ENV === 'production'
+    || Boolean(process.env.RAILWAY_ENVIRONMENT)
+    || Boolean(process.env.RAILWAY_SERVICE_ID)
+    || Boolean(process.env.RENDER)
+    || Boolean(process.env.RENDER_SERVICE_ID);
+}
+
 function normalizeGoodsCrmRefCode(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function normalizeGoodsCrmFop(value) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  return {
+    id: String(value.id || ''),
+    name: String(value.name || ''),
+  };
 }
 
 function normalizeTtnPayload(payload) {
@@ -151,30 +237,36 @@ function normalizeTtnPayload(payload) {
 }
 
 function normalizeTtnItem(item) {
-  const ttn = String(item && item.ttn || '').replace(/\D/g, '');
+  const source = typeof item === 'string' || typeof item === 'number'
+    ? { ttn: item }
+    : item || {};
+  const ttn = String(source.ttn || '').replace(/\D/g, '');
 
   return {
     ttn,
-    sourceLabel: item && item.sourceLabel || DEFAULT_SOURCE_LABEL,
-    createdBy: item && item.createdBy || '',
-    createdAt: item && item.createdAt || '',
-    description: item && item.description || '',
-    cabinetName: item && item.cabinetName || '',
-    senderName: item && item.senderName || '',
-    senderContactName: item && item.senderContactName || '',
-    senderPhone: item && item.senderPhone || '',
-    senderCity: item && item.senderCity || '',
-    senderDeliveryPoint: item && item.senderDeliveryPoint || '',
-    recipientName: item && item.recipientName || '',
-    recipientPhone: item && item.recipientPhone || '',
-    recipientCity: item && item.recipientCity || '',
-    recipientDeliveryPoint: item && item.recipientDeliveryPoint || '',
+    sourceLabel: source.sourceLabel || DEFAULT_SOURCE_LABEL,
+    createdBy: source.createdBy || '',
+    createdAt: source.createdAt || '',
+    description: source.description || '',
+    fopId: source.fopId || '',
+    fopName: source.fopName || '',
+    cabinetName: source.cabinetName || '',
+    senderName: source.senderName || '',
+    senderContactName: source.senderContactName || '',
+    senderPhone: source.senderPhone || '',
+    senderCity: source.senderCity || '',
+    senderDeliveryPoint: source.senderDeliveryPoint || '',
+    recipientName: source.recipientName || '',
+    recipientPhone: source.recipientPhone || '',
+    recipientCity: source.recipientCity || '',
+    recipientDeliveryPoint: source.recipientDeliveryPoint || '',
   };
 }
 
 module.exports = {
   DEFAULT_SOURCE_LABEL,
   isGoodsCrmConfigured,
+  linkTelegramToGoodsCrmShop,
   normalizeGoodsCrmRefCode,
   pushTtnToGoodsCrm,
   resolveGoodsCrmShop,

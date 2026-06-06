@@ -45,6 +45,7 @@ const {
 const {
   DEFAULT_SOURCE_LABEL,
   isGoodsCrmConfigured,
+  linkTelegramToGoodsCrmShop,
   normalizeGoodsCrmRefCode,
   pushTtnToGoodsCrm,
   resolveGoodsCrmShop,
@@ -154,6 +155,8 @@ async function start() {
     { command: 'delttn', description: 'Видалити створену ТТН' },
     { command: 'add_default_warehouse', description: 'Зберегти стандартне відділення' },
     { command: 'crmshop', description: 'Підключити магазин GoodsCRM' },
+    { command: 'connect', description: 'Підключити магазин CRM за кодом' },
+    { command: 'crmttn', description: 'Передати одну або кілька ТТН у CRM' },
   ]).catch((error) => {
     console.error('Failed to set bot commands:', error.message);
   });
@@ -541,8 +544,13 @@ async function handleMessage(msg) {
     return;
   }
 
-  if (command === '/crmshop') {
+  if (command === '/crmshop' || command === '/connect') {
     await handleGoodsCrmShopCommand(msg, args);
+    return;
+  }
+
+  if (command === '/crmttn') {
+    await handleGoodsCrmTtnCommand(msg, args);
     return;
   }
 
@@ -643,8 +651,11 @@ async function sendHelp(msg) {
     `🔑 ${BUTTONS.addKey} - збережемо API-ключ із кабінету Нової пошти.`,
     `🏤 ${BUTTONS.addDefaultWarehouse} - збережемо відділення відправника для швидких ТТН.`,
     `🏬 ${BUTTONS.goodsCrmShop} - підключимо магазин GoodsCRM за Telegram-кодом.`,
+    `📨 ${BUTTONS.sendGoodsCrmTtn} - передамо готову ТТН у підключений магазин CRM.`,
     `🗂 ${BUTTONS.keys} - покажу збережені кабінети.`,
     '/crmshop код - підключити магазин GoodsCRM.',
+    '/connect код - те саме підключення магазину CRM.',
+    '/crmttn номери - передати одну або кілька готових ТТН у CRM.',
     '/trackttn номер - оновити статус однієї ТТН.',
     '/delttn номер - видалити створену в боті ТТН.',
     '/stop - зупинити поточну дію й почати заново.',
@@ -761,6 +772,16 @@ async function handleMenuButton(msg, text) {
 
   if (text === BUTTONS.goodsCrmShop) {
     await startGoodsCrmShopFlow(msg);
+    return;
+  }
+
+  if (text === BUTTONS.sendGoodsCrmTtn) {
+    await startGoodsCrmTtnFlow(msg);
+    return;
+  }
+
+  if (looksLikeStandaloneGoodsCrmTtnInput(text) && getGoodsCrmShopMapping(msg)) {
+    await submitGoodsCrmTtnsFromText(msg, text);
     return;
   }
 
@@ -893,6 +914,40 @@ async function startGoodsCrmShopFlow(msg) {
   await sendText(
     msg.chat.id,
     'Введіть Код Telegram із картки магазину в GoodsCRM.',
+    textInputOptions()
+  );
+}
+
+async function startGoodsCrmTtnFlow(msg) {
+  assertLoggedIn(msg);
+
+  if (!isGoodsCrmConfigured()) {
+    await sendText(
+      msg.chat.id,
+      'Інтеграція з GoodsCRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.',
+      menuOptions(msg)
+    );
+    return;
+  }
+
+  if (!getGoodsCrmShopMapping(msg)) {
+    await sendText(
+      msg.chat.id,
+      `Спочатку підключіть магазин через "${BUTTONS.goodsCrmShop}", а потім передамо ТТН у CRM.`,
+      menuOptions(msg)
+    );
+    return;
+  }
+
+  setFlow(msg, {
+    type: 'goodsCrmTtn',
+    step: 0,
+    data: {},
+  });
+
+  await sendText(
+    msg.chat.id,
+    'Введіть один або кілька номерів ТТН. Можна через пробіл, кому або з нового рядка.',
     textInputOptions()
   );
 }
@@ -1060,7 +1115,7 @@ async function startSettingsMenu(msg) {
     'Налаштування: оберіть дію.',
     keyboardOptions([
       [BUTTONS.addDefaultWarehouse],
-      [BUTTONS.goodsCrmShop],
+      [BUTTONS.goodsCrmShop, BUTTONS.sendGoodsCrmTtn],
       [BUTTONS.cities, BUTTONS.warehouses],
       [BUTTONS.logout],
       [BUTTONS.back, BUTTONS.cancel],
@@ -1091,6 +1146,11 @@ async function handleFlowInput(msg, flow, text) {
 
   if (flow.type === 'goodsCrmShop') {
     await handleGoodsCrmShopFlowInput(msg, flow, text);
+    return;
+  }
+
+  if (flow.type === 'goodsCrmTtn') {
+    await handleGoodsCrmTtnFlowInput(msg, flow, text);
     return;
   }
 
@@ -1348,6 +1408,11 @@ async function handleGoodsCrmShopFlowInput(msg, flow, text) {
   });
 }
 
+async function handleGoodsCrmTtnFlowInput(msg, flow, text) {
+  clearFlow(msg);
+  await submitGoodsCrmTtnsFromText(msg, text);
+}
+
 async function connectGoodsCrmShop(msg, refCodeInput, options = {}) {
   const user = assertLoggedIn(msg);
   const refCode = normalizeGoodsCrmRefCode(refCodeInput);
@@ -1368,17 +1433,12 @@ async function connectGoodsCrmShop(msg, refCodeInput, options = {}) {
   }
 
   try {
-    const shop = await resolveGoodsCrmShop(refCode);
+    const resolved = await resolveGoodsCrmShop(refCode);
+    const shop = resolved.shop || {};
+    const defaultFop = resolved.defaultFop || null;
+    const linked = await saveGoodsCrmTelegramLink(msg, user, refCode, shop, defaultFop);
     const store = readStore();
 
-    store.crmShopByTelegramUser[String(msg.from.id)] = {
-      telegramUserId: msg.from.id,
-      crmShopId: shop.id || '',
-      refCode: shop.refCode || refCode,
-      shopName: shop.name || '',
-      connectedBy: user.login,
-      connectedAt: new Date().toISOString(),
-    };
     delete store.flows[String(msg.from.id)];
     await writeStore(store);
 
@@ -1387,8 +1447,10 @@ async function connectGoodsCrmShop(msg, refCodeInput, options = {}) {
       [
         'Готово, магазин GoodsCRM підключено ✅',
         `Магазин: ${shop.name || shop.refCode || refCode}`,
+        defaultFop && defaultFop.name ? `ФОП за замовчуванням: ${defaultFop.name}` : '',
+        linked ? 'Звʼязок із цим Telegram-чатом збережено в CRM.' : '',
         'Нові ТТН я передаватиму в CRM автоматично.',
-      ].join('\n'),
+      ].filter(Boolean).join('\n'),
       menuOptions(msg)
     );
   } catch (error) {
@@ -1408,6 +1470,41 @@ async function connectGoodsCrmShop(msg, refCodeInput, options = {}) {
     clearFlow(msg);
     throw error;
   }
+}
+
+async function saveGoodsCrmTelegramLink(msg, user, refCode, shop, defaultFop) {
+  const now = new Date().toISOString();
+  let linkedInCrm = false;
+
+  try {
+    await linkTelegramToGoodsCrmShop({
+      telegramUserId: msg.from.id,
+      chatId: msg.chat.id,
+      username: msg.from && msg.from.username || '',
+      refCode: shop.refCode || refCode,
+    });
+    linkedInCrm = true;
+  } catch (error) {
+    console.warn('GoodsCRM Telegram link sync skipped:', error.message);
+  }
+
+  const store = readStore();
+  store.crmShopByTelegramUser[getGoodsCrmTelegramLinkKey(msg)] = {
+    telegramUserId: String(msg.from.id),
+    chatId: String(msg.chat.id),
+    username: msg.from && msg.from.username || '',
+    crmShopId: shop.id || '',
+    refCode: shop.refCode || refCode,
+    shopName: shop.name || '',
+    defaultFopId: defaultFop && defaultFop.id || '',
+    defaultFopName: defaultFop && defaultFop.name || '',
+    linkedInCrm,
+    connectedBy: user.login,
+    connectedAt: now,
+  };
+
+  await writeStore(store);
+  return linkedInCrm;
 }
 
 async function handleDefaultSenderWarehouseFlowInput(msg, flow, text) {
@@ -2033,6 +2130,11 @@ async function handleSettingsMenuInput(msg, text) {
 
   if (text === BUTTONS.goodsCrmShop) {
     await startGoodsCrmShopFlow(msg);
+    return;
+  }
+
+  if (text === BUTTONS.sendGoodsCrmTtn) {
+    await startGoodsCrmTtnFlow(msg);
     return;
   }
 
@@ -4429,8 +4531,32 @@ function getFriendlyGoodsCrmMessage(error) {
     return 'Не знайшов магазин із таким Кодом Telegram. Перевірте код у GoodsCRM і спробуйте ще раз.';
   }
 
-  if (code === 'invalid_request' || code === 'empty_ttns') {
-    return 'GoodsCRM не прийняла дані запиту. Перевірте код магазину й спробуйте ще раз.';
+  if (code === 'empty_ttns') {
+    return 'GoodsCRM не побачила коректних номерів ТТН. Перевірте номери й спробуйте ще раз.';
+  }
+
+  if (code === 'too_many_ttns') {
+    return 'За один раз можна передати до 100 ТТН.';
+  }
+
+  if (code === 'fop_not_found') {
+    return 'GoodsCRM не знайшла цей ФОП. Перевірте налаштування магазину в CRM.';
+  }
+
+  if (code === 'fop_client_mismatch' || code === 'fop_not_assigned_to_shop') {
+    return 'GoodsCRM не дозволила цей ФОП для підключеного магазину. Перевірте призначення ФОП у CRM.';
+  }
+
+  if (code === 'fop_ambiguous') {
+    return 'GoodsCRM знайшла кілька ФОПів із такою назвою. Задайте ФОП за замовчуванням у магазині CRM і підключіть код ще раз.';
+  }
+
+  if (code === 'fop_required') {
+    return 'GoodsCRM просить вказати ФОП для цієї ТТН. Додайте ФОП за замовчуванням у магазині CRM і підключіть код ще раз.';
+  }
+
+  if (code === 'invalid_request' || code === 'telegram_identity_required') {
+    return 'GoodsCRM не прийняла дані запиту. Перевірте код магазину й номери ТТН.';
   }
 
   return 'GoodsCRM зараз не прийняла запит. Спробуйте ще раз або зверніться до адміна.';
@@ -4745,6 +4871,76 @@ async function handleGoodsCrmShopCommand(msg, args) {
   });
 }
 
+async function handleGoodsCrmTtnCommand(msg, args) {
+  assertLoggedIn(msg);
+
+  if (!args.trim()) {
+    await startGoodsCrmTtnFlow(msg);
+    return;
+  }
+
+  await submitGoodsCrmTtnsFromText(msg, args);
+}
+
+async function submitGoodsCrmTtnsFromText(msg, text) {
+  assertLoggedIn(msg);
+
+  if (!isGoodsCrmConfigured()) {
+    await sendText(
+      msg.chat.id,
+      'Інтеграція з GoodsCRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.',
+      menuOptions(msg)
+    );
+    return;
+  }
+
+  const mapping = getGoodsCrmShopMapping(msg);
+
+  if (!mapping || !mapping.refCode) {
+    await sendText(
+      msg.chat.id,
+      `Спочатку підключіть магазин через "${BUTTONS.goodsCrmShop}", а потім передамо ТТН у CRM.`,
+      menuOptions(msg)
+    );
+    return;
+  }
+
+  const numbers = parseGoodsCrmTtnNumbers(text);
+
+  if (!numbers.length) {
+    await sendText(
+      msg.chat.id,
+      'Не бачу номерів ТТН. Введіть один або кілька номерів, наприклад: 20450000000000.',
+      textInputOptions()
+    );
+    return;
+  }
+
+  if (numbers.length > 100) {
+    await sendText(msg.chat.id, 'За один раз можна передати до 100 ТТН.', menuOptions(msg));
+    return;
+  }
+
+  const result = await pushTtnToGoodsCrm({
+    refCode: mapping.refCode,
+    ttns: numbers.map((number) => createGoodsCrmManualTtnPayload(msg, number, mapping)),
+  });
+  const shop = result.shop || {};
+  const shopName = shop.name || mapping.shopName || '';
+  const refCode = shop.refCode || mapping.refCode;
+  const assignedCount = result.assignedCount || numbers.length;
+
+  await sendText(
+    msg.chat.id,
+    [
+      'Готово, ТТН передано в CRM ✅',
+      `Магазин: ${shopName || refCode}`,
+      `Кількість: ${assignedCount}`,
+    ].join('\n'),
+    menuOptions(msg)
+  );
+}
+
 async function createTtnFromProperties(msg, methodProperties, selectedKey, flowData) {
   const user = assertLoggedIn(msg);
   const key = selectedKey || getSelectedApiKey(msg);
@@ -4818,7 +5014,7 @@ async function syncCreatedShipmentToGoodsCrm(msg, number, shipment) {
     const result = await pushTtnToGoodsCrm({
       refCode: mapping.refCode,
       ttns: [
-        createGoodsCrmTtnPayload(msg, number, shipment),
+        createGoodsCrmTtnPayload(msg, number, shipment, mapping),
       ],
     });
     const shop = result.shop || {};
@@ -4853,7 +5049,18 @@ async function syncCreatedShipmentToGoodsCrm(msg, number, shipment) {
 
 function getGoodsCrmShopMapping(msg) {
   const store = readStore();
-  return store.crmShopByTelegramUser[String(msg.from.id)] || null;
+  const mappings = store.crmShopByTelegramUser || {};
+  const key = getGoodsCrmTelegramLinkKey(msg);
+
+  if (mappings[key]) {
+    return mappings[key];
+  }
+
+  return mappings[String(msg.from.id)] || null;
+}
+
+function getGoodsCrmTelegramLinkKey(msg) {
+  return `${String(msg.from.id)}:${String(msg.chat.id)}`;
 }
 
 async function updateShipmentGoodsCrmStatus(number, crm) {
@@ -4867,13 +5074,15 @@ async function updateShipmentGoodsCrmStatus(number, crm) {
   await writeStore(store);
 }
 
-function createGoodsCrmTtnPayload(msg, number, shipment) {
-  return {
+function createGoodsCrmTtnPayload(msg, number, shipment, mapping) {
+  const payload = {
     ttn: number,
     sourceLabel: DEFAULT_SOURCE_LABEL,
     createdBy: formatGoodsCrmCreatedBy(msg, shipment.createdBy),
     createdAt: shipment.createdAt,
     description: shipment.description || '',
+    fopId: mapping && mapping.defaultFopId || '',
+    fopName: mapping && mapping.defaultFopName || shipment.apiKeyAlias || '',
     cabinetName: shipment.apiKeyAlias || '',
     senderName: shipment.senderName || '',
     senderContactName: shipment.senderContactName || '',
@@ -4885,6 +5094,45 @@ function createGoodsCrmTtnPayload(msg, number, shipment) {
     recipientCity: shipment.recipientCity || '',
     recipientDeliveryPoint: shipment.recipientDeliveryPoint || '',
   };
+
+  if (!payload.fopId && !payload.fopName) {
+    delete payload.fopId;
+    delete payload.fopName;
+  }
+
+  return payload;
+}
+
+function createGoodsCrmManualTtnPayload(msg, number, mapping) {
+  const payload = {
+    ttn: number,
+    sourceLabel: DEFAULT_SOURCE_LABEL,
+    createdBy: formatGoodsCrmCreatedBy(msg, ''),
+    createdAt: new Date().toISOString(),
+    description: 'Submitted from Telegram bot',
+    fopId: mapping && mapping.defaultFopId || '',
+    fopName: mapping && mapping.defaultFopName || '',
+  };
+
+  if (!payload.fopId && !payload.fopName) {
+    delete payload.fopId;
+    delete payload.fopName;
+  }
+
+  return payload;
+}
+
+function parseGoodsCrmTtnNumbers(text) {
+  const normalized = String(text || '')
+    .split(/\D+/)
+    .map(normalizeTtnNumber)
+    .filter((number) => number.length >= 10);
+
+  return Array.from(new Set(normalized));
+}
+
+function looksLikeStandaloneGoodsCrmTtnInput(text) {
+  return parseGoodsCrmTtnNumbers(text).length > 0;
 }
 
 function formatGoodsCrmCreatedBy(msg, fallback) {

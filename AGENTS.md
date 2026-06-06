@@ -65,10 +65,10 @@ kill PID
 
 ## Runtime Data
 
-Production runtime data lives in Neon/Postgres when `DATABASE_URL` is set.
-On production hosts, the bot must not silently use local JSON fallback unless `ALLOW_JSON_STORE_IN_PRODUCTION=true` is set for an emergency.
+The CRM owns the canonical production database. The bot must not connect to PostgreSQL directly and must not use `DATABASE_URL`.
+The bot talks to CRM only through `/api/bot/*` endpoints.
 
-Local fallback runtime data lives in:
+Local Telegram UX/cache data lives in:
 
 - `data/store.json`
 
@@ -85,7 +85,7 @@ The runtime store contains:
 - `selectedApiKeyByUser`: selected cabinet per local bot user;
 - `defaultSenders`: saved sender/contact pairs per local bot user and cabinet;
 - `defaultSenderWarehouses`: saved sender branches per local bot user and cabinet;
-- `crmShopByTelegramUser`: Telegram user id to GoodsCRM shop mapping;
+- `crmShopByTelegramUser`: Telegram user id plus chat id to GoodsCRM shop mapping;
 - `shipments`: created TTNs and raw API responses;
 - `flows`: active Telegram conversation flows;
 - `botMessagesByChat`: bot message ids used for chat cleanup.
@@ -99,8 +99,8 @@ Be careful with runtime data.
 
 On Railway:
 
-- Set `DATABASE_URL` to the Neon connection string with `sslmode=require`.
-- Use a Railway Volume only as a temporary JSON fallback or first-run migration source.
+- Do not set `DATABASE_URL` in the bot service.
+- Use a Railway Volume only if the bot needs durable local Telegram UX/cache state.
 - If mounting old JSON elsewhere, set `STORE_PATH`, for example `/data/store.json`.
 - Keep one replica only because Telegram polling must be single-process.
 - Keep Serverless off for polling mode.
@@ -108,8 +108,8 @@ On Railway:
 On Render:
 
 - Use webhook mode for free web services: `BOT_MODE=webhook`.
-- Set `DATABASE_URL` to the Neon connection string with `sslmode=require`.
-- Do not rely on local `data/store.json` for persistence on Render.
+- Do not set `DATABASE_URL` in the bot service.
+- Render's ephemeral filesystem can lose local cache; CRM data remains durable through the CRM API.
 
 ## Main Files
 
@@ -155,10 +155,7 @@ Keep `index.js` as the owner of chat flow, but do not put low-level infrastructu
 
 `src/store.js`
 
-- Neon/Postgres store creation when `DATABASE_URL` is set.
-- Local `data/store.json` fallback when `DATABASE_URL` is not set.
-- First Postgres startup can seed from an existing JSON store.
-- Store read/write.
+- Local `data/store.json` cache read/write.
 - Active flow get/set/clear.
 - Saved default senders.
 - Saved default sender branches.
@@ -188,8 +185,7 @@ Keep `index.js` as the owner of chat flow, but do not put low-level infrastructu
 
 - Railway deployment settings.
 - Required variables.
-- Neon persistence setup.
-- Volume setup for optional JSON fallback or migration.
+- Volume setup for optional local JSON cache persistence.
 
 ## Telegram UX Rules
 

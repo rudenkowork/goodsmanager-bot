@@ -11,7 +11,6 @@ Add these variables in the Render service:
 ```text
 BOT_TOKEN=<token from BotFather>
 MAIN_ADMIN_TELEGRAM_USERNAME=timarudy
-DATABASE_URL=<Neon connection string with sslmode=require>
 BOT_MODE=webhook
 WEBHOOK_SECRET=<long random value with letters, numbers, underscores, or dashes>
 GOODSCRM_BASE_URL=<GoodsCRM app URL>
@@ -24,10 +23,10 @@ BOT_INGEST_SECRET=<same secret as the CRM server>
 WEBHOOK_BASE_URL=https://your-domain.example
 ```
 
-Keep `DATABASE_URL` secret. When it is set, the bot stores runtime data in Neon/Postgres. Without it, the bot falls back to local `data/store.json`, which is not durable on free ephemeral hosts.
 Keep `BOT_INGEST_SECRET` secret too. It must match the CRM server variable with the same name.
+Do not set `DATABASE_URL` in this bot service. The CRM owns the Neon/Postgres database, and the bot writes CRM data only through `/api/bot/*`.
 
-The app refuses to start on Render without `DATABASE_URL`; this prevents accidental writes to ephemeral local storage.
+The bot keeps small Telegram UX/session cache data in local JSON. Render's free ephemeral filesystem can lose that cache after restarts; CRM data remains durable because it is written through the CRM API.
 
 ## Start Command
 
@@ -53,7 +52,7 @@ You can use `/health` as the Render health check path.
 
 - Keep one Render instance only.
 - Do not run polling and webhook mode at the same time for the same Telegram bot token.
-- Keep `DATABASE_URL` set before creating users, cabinets, TTNs, or sessions you want to preserve.
-- Use `ALLOW_JSON_STORE_IN_PRODUCTION=true` only as a short emergency fallback.
+- Do not point this bot at the CRM database.
+- Use `STORE_PATH` only if your Render plan provides durable disk storage for local cache.
 - The first message after Render sleeps may be delayed while Render starts the service.
 - If you need instant replies all day, use a paid always-on instance or a host that supports long-running workers.
