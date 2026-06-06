@@ -57,7 +57,7 @@ Do not put low-level API clients, store plumbing, password hashing, or generic v
 - Active flow get/set/clear.
 - Saved default sender/contact pairs per local user and Nova Poshta cabinet.
 - Saved default sender branches per local user and Nova Poshta cabinet.
-- GoodsCRM shop mapping by Telegram user id plus chat id.
+- CRM shop mappings by Telegram user id plus chat id, including multiple connected shops and the last selected shop.
 
 `src/textUtils.js`
 
@@ -78,11 +78,12 @@ The human-facing flow should avoid exposing Nova Poshta `Ref` values.
 Current sender flow:
 
 1. Choose API cabinet by alias.
-2. Automatically use the first sender returned by the selected Nova Poshta API key.
-3. Automatically use the first sender contact with a phone from that sender, or the first contact if none have a phone.
-4. Use contact phone automatically when Nova Poshta returns it; otherwise ask for sender phone manually.
-5. If the user saved default sender branches, choose one by name or select another branch.
-6. If no default branch is used, choose sender area, settlement type, settlement, and enter branch number. Sender postomat is not offered.
+2. Choose the CRM shop for this TTN when CRM integration is configured.
+3. Automatically use the first sender returned by the selected Nova Poshta API key.
+4. Automatically use the first sender contact with a phone from that sender, or the first contact if none have a phone.
+5. Use contact phone automatically when Nova Poshta returns it; otherwise ask for sender phone manually.
+6. If the user saved default sender branches, choose one by name or select another branch.
+7. If no default branch is used, choose sender area, settlement type, settlement, and enter branch number. Sender postomat is not offered.
 
 The bot skips the cabinet choice when there is only one valid option. New senders are created in the Nova Poshta cabinet, then the bot can refresh the API list. Seats amount and delivery payer are not asked in chat; TTN creation uses defaults in `buildTtnProperties`.
 
@@ -130,12 +131,13 @@ Tracking uses `TrackingDocument/getStatusDocuments` grouped by Nova Poshta cabin
 
 GoodsCRM integration:
 
-1. A logged-in user enters the shop `Код Telegram` through `Код GoodsCRM` in settings or `/crmshop code`.
+1. A logged-in user enters one or more shop `Код Telegram` values through `Коди магазинів` in settings or `/crmshop code`.
 2. The bot resolves the code through `POST /api/bot/shops/resolve`.
 3. The bot posts the optional Telegram identity link to `POST /api/bot/telegram-links` and stores a local cache under `telegramUserId:chatId`.
-4. After a TTN is created in Nova Poshta and saved locally, the bot sends it to `POST /api/bot/ttns` with the saved `refCode`, optional `fopId`/`fopName`, and sender details.
-5. A user can also submit one or many ready TTN numbers through `/crmttn` or `Передати ТТН у CRM`; the bot reuses the linked `refCode`.
-6. CRM sync success or failure is stored on the shipment as `shipment.crm`; CRM errors do not undo Nova Poshta TTN creation.
+4. During guided TTN creation, the user chooses one connected shop by the CRM shop name, and the selected `refCode` plus default FOP are stored on the TTN draft.
+5. After a TTN is created in Nova Poshta and saved locally, the bot sends it to `POST /api/bot/ttns` with the selected `refCode`, optional `fopId`/`fopName`, and sender details.
+6. A user can also submit one or many ready TTN numbers through `/crmttn` or `Передати ТТН у CRM`; the bot reuses the last selected shop.
+7. CRM sync success or failure is stored on the shipment as `shipment.crm`; CRM errors do not undo Nova Poshta TTN creation.
 
 ## Validation
 

@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 
+const { CREATE_TTN_FLOW_VERSION } = require('./createTtnConfig');
+
 const DEFAULT_DATA_DIR = path.join(__dirname, '..', 'data');
 const STORE_PATH = getStorePath();
 const DATA_DIR = path.dirname(STORE_PATH);
@@ -67,6 +69,8 @@ function createEmptyStore(config = {}) {
     defaultSenders: {},
     defaultSenderWarehouses: {},
     crmShopByTelegramUser: {},
+    crmShopsByTelegramUser: {},
+    selectedCrmShopByTelegramUser: {},
     shipments: {},
     flows: {},
     botMessagesByChat: {},
@@ -99,9 +103,14 @@ function normalizeStore(store, config = {}) {
   ensureObject(normalized, 'defaultSenders');
   ensureObject(normalized, 'defaultSenderWarehouses');
   ensureObject(normalized, 'crmShopByTelegramUser');
+  ensureObject(normalized, 'crmShopsByTelegramUser');
+  ensureObject(normalized, 'selectedCrmShopByTelegramUser');
   ensureObject(normalized, 'shipments');
   ensureObject(normalized, 'flows');
   ensureObject(normalized, 'botMessagesByChat');
+  normalizeGoodsCrmShopCollections(normalized);
+  migrateLegacyGoodsCrmShopMappings(normalized);
+  clearStaleCreateTtnFlows(normalized);
 
   return normalized;
 }
@@ -130,6 +139,101 @@ function configFallbackMainAdmin() {
 function ensureObject(store, key) {
   if (!store[key] || typeof store[key] !== 'object' || Array.isArray(store[key])) {
     store[key] = {};
+  }
+}
+
+function normalizeGoodsCrmShopCollections(store) {
+  for (const key of Object.keys(store.crmShopsByTelegramUser)) {
+    if (!store.crmShopsByTelegramUser[key]
+      || typeof store.crmShopsByTelegramUser[key] !== 'object'
+      || Array.isArray(store.crmShopsByTelegramUser[key])) {
+      store.crmShopsByTelegramUser[key] = {};
+      continue;
+    }
+
+    const shops = store.crmShopsByTelegramUser[key];
+    for (const storedRefCode of Object.keys(shops)) {
+      const mapping = normalizeStoredGoodsCrmShopMapping(shops[storedRefCode]);
+      delete shops[storedRefCode];
+
+      if (mapping.refCode) {
+        shops[mapping.refCode] = mapping;
+      }
+    }
+
+    const selectedRefCode = normalizeStoredRefCode(store.selectedCrmShopByTelegramUser[key]);
+    if (selectedRefCode && shops[selectedRefCode]) {
+      store.selectedCrmShopByTelegramUser[key] = selectedRefCode;
+      continue;
+    }
+
+    const refCodes = Object.keys(shops);
+    if (refCodes.length) {
+      store.selectedCrmShopByTelegramUser[key] = refCodes[0];
+    } else {
+      delete store.selectedCrmShopByTelegramUser[key];
+    }
+  }
+}
+
+function migrateLegacyGoodsCrmShopMappings(store) {
+  for (const key of Object.keys(store.crmShopByTelegramUser)) {
+    const mapping = normalizeStoredGoodsCrmShopMapping(store.crmShopByTelegramUser[key]);
+
+    if (!mapping.refCode) {
+      continue;
+    }
+
+    if (!store.crmShopsByTelegramUser[key]
+      || typeof store.crmShopsByTelegramUser[key] !== 'object'
+      || Array.isArray(store.crmShopsByTelegramUser[key])) {
+      store.crmShopsByTelegramUser[key] = {};
+    }
+
+    if (!store.crmShopsByTelegramUser[key][mapping.refCode]) {
+      store.crmShopsByTelegramUser[key][mapping.refCode] = mapping;
+    }
+
+    const selectedRefCode = normalizeStoredRefCode(store.selectedCrmShopByTelegramUser[key]);
+
+    if (selectedRefCode) {
+      store.selectedCrmShopByTelegramUser[key] = selectedRefCode;
+    } else {
+      store.selectedCrmShopByTelegramUser[key] = mapping.refCode;
+    }
+  }
+}
+
+function normalizeStoredGoodsCrmShopMapping(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.assign({}, value, {
+    telegramUserId: String(value.telegramUserId || ''),
+    chatId: String(value.chatId || ''),
+    username: String(value.username || ''),
+    crmShopId: String(value.crmShopId || ''),
+    refCode: normalizeStoredRefCode(value.refCode),
+    shopName: String(value.shopName || ''),
+    defaultFopId: String(value.defaultFopId || ''),
+    defaultFopName: String(value.defaultFopName || ''),
+    connectedBy: String(value.connectedBy || ''),
+    connectedAt: String(value.connectedAt || ''),
+  });
+}
+
+function normalizeStoredRefCode(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function clearStaleCreateTtnFlows(store) {
+  for (const key of Object.keys(store.flows)) {
+    const flow = store.flows[key];
+
+    if (flow && flow.type === 'createTtn' && flow.version !== CREATE_TTN_FLOW_VERSION) {
+      delete store.flows[key];
+    }
   }
 }
 

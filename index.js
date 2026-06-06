@@ -67,6 +67,7 @@ const {
   CHOICE_PAGE_SIZE,
   CITY_CHOICES_LIMIT,
   CREATE_TTN_FIELDS,
+  CREATE_TTN_FLOW_VERSION,
   DELIVERY_TYPE_CHOICES,
   MAIN_CITY_BY_AREA,
   POSTOMAT_TYPE_REFS,
@@ -154,7 +155,7 @@ async function start() {
     { command: 'stop', description: 'Зупинити поточну дію' },
     { command: 'delttn', description: 'Видалити створену ТТН' },
     { command: 'add_default_warehouse', description: 'Зберегти стандартне відділення' },
-    { command: 'crmshop', description: 'Підключити магазин GoodsCRM' },
+    { command: 'crmshop', description: 'Підключити магазин CRM' },
     { command: 'connect', description: 'Підключити магазин CRM за кодом' },
     { command: 'crmttn', description: 'Передати одну або кілька ТТН у CRM' },
   ]).catch((error) => {
@@ -650,10 +651,10 @@ async function sendHelp(msg) {
     `↩ ${BUTTONS.returns} - покажу повернення та звʼязок із початковою ТТН.`,
     `🔑 ${BUTTONS.addKey} - збережемо API-ключ із кабінету Нової пошти.`,
     `🏤 ${BUTTONS.addDefaultWarehouse} - збережемо відділення відправника для швидких ТТН.`,
-    `🏬 ${BUTTONS.goodsCrmShop} - підключимо магазин GoodsCRM за Telegram-кодом.`,
+    `🏬 ${BUTTONS.goodsCrmShop} - додамо магазини CRM за Telegram-кодами.`,
     `📨 ${BUTTONS.sendGoodsCrmTtn} - передамо готову ТТН у підключений магазин CRM.`,
     `🗂 ${BUTTONS.keys} - покажу збережені кабінети.`,
-    '/crmshop код - підключити магазин GoodsCRM.',
+    '/crmshop код - підключити магазин CRM.',
     '/connect код - те саме підключення магазину CRM.',
     '/crmttn номери - передати одну або кілька готових ТТН у CRM.',
     '/trackttn номер - оновити статус однієї ТТН.',
@@ -899,7 +900,7 @@ async function startGoodsCrmShopFlow(msg) {
   if (!isGoodsCrmConfigured()) {
     await sendText(
       msg.chat.id,
-      'Інтеграція з GoodsCRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.',
+      'Інтеграція з CRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.',
       menuOptions(msg)
     );
     return;
@@ -913,7 +914,7 @@ async function startGoodsCrmShopFlow(msg) {
 
   await sendText(
     msg.chat.id,
-    'Введіть Код Telegram із картки магазину в GoodsCRM.',
+    formatGoodsCrmShopCodePrompt(msg),
     textInputOptions()
   );
 }
@@ -924,7 +925,7 @@ async function startGoodsCrmTtnFlow(msg) {
   if (!isGoodsCrmConfigured()) {
     await sendText(
       msg.chat.id,
-      'Інтеграція з GoodsCRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.',
+      'Інтеграція з CRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.',
       menuOptions(msg)
     );
     return;
@@ -933,7 +934,7 @@ async function startGoodsCrmTtnFlow(msg) {
   if (!getGoodsCrmShopMapping(msg)) {
     await sendText(
       msg.chat.id,
-      `Спочатку підключіть магазин через "${BUTTONS.goodsCrmShop}", а потім передамо ТТН у CRM.`,
+      `Спочатку додайте магазин через "${BUTTONS.goodsCrmShop}", а потім передамо ТТН у CRM.`,
       menuOptions(msg)
     );
     return;
@@ -992,6 +993,7 @@ async function startCreateTtnFlow(msg) {
 
   const flow = {
     type: 'createTtn',
+    version: CREATE_TTN_FLOW_VERSION,
     step: -1,
     data: {},
   };
@@ -1421,14 +1423,14 @@ async function connectGoodsCrmShop(msg, refCodeInput, options = {}) {
     clearFlow(msg);
     await sendText(
       msg.chat.id,
-      'Інтеграція з GoodsCRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.',
+      'Інтеграція з CRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.',
       menuOptions(msg)
     );
     return;
   }
 
   if (!refCode) {
-    await sendText(msg.chat.id, 'Введіть Код Telegram із картки магазину в GoodsCRM.', textInputOptions());
+    await sendText(msg.chat.id, 'Введіть Код Telegram із картки магазину в CRM.', textInputOptions());
     return;
   }
 
@@ -1445,11 +1447,11 @@ async function connectGoodsCrmShop(msg, refCodeInput, options = {}) {
     await sendText(
       msg.chat.id,
       [
-        'Готово, магазин GoodsCRM підключено ✅',
+        'Готово, магазин підключено ✅',
         `Магазин: ${shop.name || shop.refCode || refCode}`,
         defaultFop && defaultFop.name ? `ФОП за замовчуванням: ${defaultFop.name}` : '',
         linked ? 'Звʼязок із цим Telegram-чатом збережено в CRM.' : '',
-        'Нові ТТН я передаватиму в CRM автоматично.',
+        'Під час створення ТТН оберіть цей магазин зі списку.',
       ].filter(Boolean).join('\n'),
       menuOptions(msg)
     );
@@ -1461,7 +1463,7 @@ async function connectGoodsCrmShop(msg, refCodeInput, options = {}) {
 
       await sendText(
         msg.chat.id,
-        'Не знайшов магазин із таким кодом. Перевірте Код Telegram у GoodsCRM і введіть його ще раз.',
+        'Не знайшов магазин із таким кодом. Перевірте Код Telegram у CRM і введіть його ще раз.',
         options.keepFlowOnInvalidCode ? textInputOptions() : menuOptions(msg)
       );
       return;
@@ -1489,12 +1491,13 @@ async function saveGoodsCrmTelegramLink(msg, user, refCode, shop, defaultFop) {
   }
 
   const store = readStore();
-  store.crmShopByTelegramUser[getGoodsCrmTelegramLinkKey(msg)] = {
+  const linkKey = getGoodsCrmTelegramLinkKey(msg);
+  const mapping = {
     telegramUserId: String(msg.from.id),
     chatId: String(msg.chat.id),
     username: msg.from && msg.from.username || '',
     crmShopId: shop.id || '',
-    refCode: shop.refCode || refCode,
+    refCode: normalizeGoodsCrmRefCode(shop.refCode || refCode),
     shopName: shop.name || '',
     defaultFopId: defaultFop && defaultFop.id || '',
     defaultFopName: defaultFop && defaultFop.name || '',
@@ -1502,6 +1505,14 @@ async function saveGoodsCrmTelegramLink(msg, user, refCode, shop, defaultFop) {
     connectedBy: user.login,
     connectedAt: now,
   };
+
+  if (!store.crmShopsByTelegramUser[linkKey]) {
+    store.crmShopsByTelegramUser[linkKey] = {};
+  }
+
+  store.crmShopsByTelegramUser[linkKey][mapping.refCode] = mapping;
+  store.selectedCrmShopByTelegramUser[linkKey] = mapping.refCode;
+  store.crmShopByTelegramUser[linkKey] = mapping;
 
   await writeStore(store);
   return linkedInCrm;
@@ -1768,6 +1779,11 @@ async function handleCreateTtnFlowInput(msg, flow, text) {
     return;
   }
 
+  if (flow.mode === 'goodsCrmShopChoice') {
+    await handleCreateTtnGoodsCrmShopChoice(msg, flow, text);
+    return;
+  }
+
   if (flow.mode === 'cityChoice') {
     await handleCreateTtnCityChoice(msg, flow, text);
     return;
@@ -1839,6 +1855,11 @@ async function handleCreateTtnFlowInput(msg, flow, text) {
 
   if (field.key === 'PaymentType') {
     await handleCreateTtnPaymentType(msg, flow, value);
+    return;
+  }
+
+  if (field.goodsCrmShop) {
+    await offerGoodsCrmShopChoices(msg, flow, field);
     return;
   }
 
@@ -2979,6 +3000,79 @@ async function handleCreateTtnKeySelection(msg, flow, text) {
   await askNextCreateTtnField(msg, flow);
 }
 
+async function offerGoodsCrmShopChoices(msg, flow, field) {
+  if (!isGoodsCrmConfigured()) {
+    flow.data.CrmShopSkipped = true;
+    flow.step += 1;
+    setFlow(msg, flow);
+    await askNextCreateTtnField(msg, flow);
+    return;
+  }
+
+  const choices = getGoodsCrmShopChoices(msg);
+
+  if (!choices.length) {
+    clearFlow(msg);
+    await sendText(
+      msg.chat.id,
+      `Спочатку додайте магазин через "${BUTTONS.goodsCrmShop}", а потім створимо ТТН для потрібного магазину.`,
+      menuOptions(msg)
+    );
+    return;
+  }
+
+  flow.mode = 'goodsCrmShopChoice';
+  flow.pendingField = field.key;
+  setPagedChoiceState(flow, field.prompt, choices, 1, 1, CHOICE_PAGE_SIZE);
+  setFlow(msg, flow);
+  await sendPagedChoiceList(msg, flow);
+}
+
+async function handleCreateTtnGoodsCrmShopChoice(msg, flow, text) {
+  if (handleLocalChoicePageChange(flow, text)) {
+    setFlow(msg, flow);
+    await sendPagedChoiceList(msg, flow);
+    return;
+  }
+
+  const choice = findChoiceByText(getCurrentPageChoices(flow), text);
+
+  if (!choice) {
+    setFlow(msg, flow);
+    await sendText(msg.chat.id, 'Натисніть магазин зі списку нижче.', pagedChoiceOptions(flow));
+    return;
+  }
+
+  const mapping = choice.mapping || {};
+  applyGoodsCrmShopToCreateFlow(flow, mapping);
+  await selectGoodsCrmShopForChat(msg, mapping);
+
+  flow.step += 1;
+  delete flow.mode;
+  delete flow.pendingField;
+  clearPagedChoiceState(flow);
+  setFlow(msg, flow);
+
+  await sendText(
+    msg.chat.id,
+    [
+      `Магазин: ${formatGoodsCrmShopName(mapping)}`,
+      mapping.defaultFopName ? `ФОП: ${mapping.defaultFopName}` : '',
+    ].filter(Boolean).join('\n')
+  );
+  await askNextCreateTtnField(msg, flow);
+}
+
+function applyGoodsCrmShopToCreateFlow(flow, mapping) {
+  flow.data.CrmShop = mapping.refCode || '';
+  flow.data.CrmShopRefCode = mapping.refCode || '';
+  flow.data.CrmShopDescription = formatGoodsCrmShopName(mapping);
+  flow.data.CrmShopId = mapping.crmShopId || '';
+  flow.data.CrmShopName = mapping.shopName || '';
+  flow.data.CrmShopDefaultFopId = mapping.defaultFopId || '';
+  flow.data.CrmShopDefaultFopName = mapping.defaultFopName || '';
+}
+
 async function offerAreaChoices(msg, flow, field, page) {
   const key = getApiKeyForCreateFlow(flow);
   const response = await callNovaPost(key.apiKey, 'Address', 'getAreas', {});
@@ -3514,6 +3608,11 @@ async function askNextCreateTtnField(msg, flow) {
     setFlow(msg, flow);
 
     if (nextField.key === 'AreaSender' && await offerSenderWarehouseDefaults(msg, flow, nextField)) {
+      return;
+    }
+
+    if (nextField.goodsCrmShop) {
+      await offerGoodsCrmShopChoices(msg, flow, nextField);
       return;
     }
 
@@ -4184,6 +4283,14 @@ function removeCreateFlowValue(flow, field) {
   delete flow.data[`${field.key}SettlementTypeLabel`];
   delete flow.data[`${field.key}DeliveryType`];
   delete flow.data[`${field.key}DeliveryTypeLabel`];
+
+  if (field.key === 'CrmShop') {
+    delete flow.data.CrmShopRefCode;
+    delete flow.data.CrmShopId;
+    delete flow.data.CrmShopName;
+    delete flow.data.CrmShopDefaultFopId;
+    delete flow.data.CrmShopDefaultFopName;
+  }
 }
 
 function removeCreateFlowValueAndDependents(flow, field) {
@@ -4520,19 +4627,19 @@ function getFriendlyGoodsCrmMessage(error) {
   const code = error && error.goodsCrmCode ? error.goodsCrmCode : '';
 
   if (code === 'not_configured') {
-    return 'Інтеграція з GoodsCRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.';
+    return 'Інтеграція з CRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.';
   }
 
   if (code === 'unauthorized') {
-    return 'GoodsCRM не прийняла запит авторизації. Напишіть адміну, щоб перевірити секрет інтеграції.';
+    return 'CRM не прийняла запит авторизації. Напишіть адміну, щоб перевірити секрет інтеграції.';
   }
 
   if (isGoodsCrmShopNotFound(error)) {
-    return 'Не знайшов магазин із таким Кодом Telegram. Перевірте код у GoodsCRM і спробуйте ще раз.';
+    return 'Не знайшов магазин із таким Кодом Telegram. Перевірте код у CRM і спробуйте ще раз.';
   }
 
   if (code === 'empty_ttns') {
-    return 'GoodsCRM не побачила коректних номерів ТТН. Перевірте номери й спробуйте ще раз.';
+    return 'CRM не побачила коректних номерів ТТН. Перевірте номери й спробуйте ще раз.';
   }
 
   if (code === 'too_many_ttns') {
@@ -4540,26 +4647,26 @@ function getFriendlyGoodsCrmMessage(error) {
   }
 
   if (code === 'fop_not_found') {
-    return 'GoodsCRM не знайшла цей ФОП. Перевірте налаштування магазину в CRM.';
+    return 'CRM не знайшла цей ФОП. Перевірте налаштування магазину в CRM.';
   }
 
   if (code === 'fop_client_mismatch' || code === 'fop_not_assigned_to_shop') {
-    return 'GoodsCRM не дозволила цей ФОП для підключеного магазину. Перевірте призначення ФОП у CRM.';
+    return 'CRM не дозволила цей ФОП для підключеного магазину. Перевірте призначення ФОП у CRM.';
   }
 
   if (code === 'fop_ambiguous') {
-    return 'GoodsCRM знайшла кілька ФОПів із такою назвою. Задайте ФОП за замовчуванням у магазині CRM і підключіть код ще раз.';
+    return 'CRM знайшла кілька ФОПів із такою назвою. Задайте ФОП за замовчуванням у магазині CRM і підключіть код ще раз.';
   }
 
   if (code === 'fop_required') {
-    return 'GoodsCRM просить вказати ФОП для цієї ТТН. Додайте ФОП за замовчуванням у магазині CRM і підключіть код ще раз.';
+    return 'CRM просить вказати ФОП для цієї ТТН. Додайте ФОП за замовчуванням у магазині CRM і підключіть код ще раз.';
   }
 
   if (code === 'invalid_request' || code === 'telegram_identity_required') {
-    return 'GoodsCRM не прийняла дані запиту. Перевірте код магазину й номери ТТН.';
+    return 'CRM не прийняла дані запиту. Перевірте код магазину й номери ТТН.';
   }
 
-  return 'GoodsCRM зараз не прийняла запит. Спробуйте ще раз або зверніться до адміна.';
+  return 'CRM зараз не прийняла запит. Спробуйте ще раз або зверніться до адміна.';
 }
 
 function isGoodsCrmShopNotFound(error) {
@@ -4888,7 +4995,7 @@ async function submitGoodsCrmTtnsFromText(msg, text) {
   if (!isGoodsCrmConfigured()) {
     await sendText(
       msg.chat.id,
-      'Інтеграція з GoodsCRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.',
+      'Інтеграція з CRM ще не налаштована. Напишіть адміну, щоб додати адресу CRM.',
       menuOptions(msg)
     );
     return;
@@ -4899,7 +5006,7 @@ async function submitGoodsCrmTtnsFromText(msg, text) {
   if (!mapping || !mapping.refCode) {
     await sendText(
       msg.chat.id,
-      `Спочатку підключіть магазин через "${BUTTONS.goodsCrmShop}", а потім передамо ТТН у CRM.`,
+      `Спочатку додайте магазин через "${BUTTONS.goodsCrmShop}", а потім передамо ТТН у CRM.`,
       menuOptions(msg)
     );
     return;
@@ -4949,6 +5056,7 @@ async function createTtnFromProperties(msg, methodProperties, selectedKey, flowD
   const number = item.IntDocNumber || item.Number || item.DocumentNumber || 'без номера у відповіді';
   const createdAt = new Date().toISOString();
   const store = readStore();
+  const crmShop = getCreateFlowGoodsCrmShopMapping(msg, flowData);
   const shipment = {
     apiKeyAlias: key.alias,
     createdBy: user.login,
@@ -4968,6 +5076,7 @@ async function createTtnFromProperties(msg, methodProperties, selectedKey, flowD
     recipientCity: flowData && flowData.CityRecipientDescription || '',
     recipientDeliveryPoint: flowData && flowData.RecipientAddressNameDescription || '',
     payment: createShipmentPaymentRecord(flowData, methodProperties),
+    crmShop,
     status: {
       code: '',
       text: 'Створено, очікує передачі до Нової пошти',
@@ -5000,14 +5109,14 @@ async function syncCreatedShipmentToGoodsCrm(msg, number, shipment) {
     return '';
   }
 
-  const mapping = getGoodsCrmShopMapping(msg);
+  const mapping = getShipmentGoodsCrmShopMapping(msg, shipment);
 
   if (!mapping || !mapping.refCode) {
     await updateShipmentGoodsCrmStatus(number, {
       status: 'not_connected',
       updatedAt: new Date().toISOString(),
     });
-    return `GoodsCRM: магазин не підключено. Додайте "${BUTTONS.goodsCrmShop}" у налаштуваннях.`;
+    return `CRM: магазин не підключено. Додайте "${BUTTONS.goodsCrmShop}" у налаштуваннях.`;
   }
 
   try {
@@ -5030,7 +5139,7 @@ async function syncCreatedShipmentToGoodsCrm(msg, number, shipment) {
       pushedAt: new Date().toISOString(),
     });
 
-    return `GoodsCRM: передано в ${shopName || refCode}.`;
+    return `CRM: передано в ${shopName || refCode}.`;
   } catch (error) {
     console.error(`GoodsCRM TTN sync failed for ${number}:`, error.message);
     await updateShipmentGoodsCrmStatus(number, {
@@ -5043,24 +5152,191 @@ async function syncCreatedShipmentToGoodsCrm(msg, number, shipment) {
       errorAt: new Date().toISOString(),
     });
 
-    return 'GoodsCRM: ТТН створена, але CRM поки не прийняла її. Перевірте код магазину або зверніться до адміна.';
+    return `CRM: ТТН створена, але CRM поки не прийняла її. ${getFriendlyGoodsCrmMessage(error)}`;
   }
 }
 
-function getGoodsCrmShopMapping(msg) {
-  const store = readStore();
-  const mappings = store.crmShopByTelegramUser || {};
-  const key = getGoodsCrmTelegramLinkKey(msg);
+function formatGoodsCrmShopCodePrompt(msg) {
+  const shops = getGoodsCrmShopMappings(msg);
+  const lines = [];
 
-  if (mappings[key]) {
-    return mappings[key];
+  if (shops.length) {
+    const visibleShops = shops.slice(0, 12);
+    lines.push('Підключені магазини:');
+    lines.push(...visibleShops.map((shop) => `- ${formatGoodsCrmShopName(shop)}`));
+    if (shops.length > visibleShops.length) {
+      lines.push(`- ще ${shops.length - visibleShops.length}`);
+    }
+    lines.push('');
+    lines.push('Щоб додати ще один магазин, введіть Код Telegram із картки магазину в CRM.');
+    return lines.join('\n');
   }
 
-  return mappings[String(msg.from.id)] || null;
+  return 'Введіть Код Telegram із картки магазину в CRM.';
+}
+
+function getGoodsCrmShopChoices(msg) {
+  const mappings = getGoodsCrmShopMappings(msg);
+  const labelCounts = {};
+
+  for (const mapping of mappings) {
+    const label = normalizeSearchText(mapping.shopName || mapping.refCode);
+    labelCounts[label] = (labelCounts[label] || 0) + 1;
+  }
+
+  return mappings.map((mapping) => {
+    const name = mapping.shopName || mapping.refCode;
+    const duplicate = labelCounts[normalizeSearchText(name)] > 1;
+    const label = duplicate && mapping.refCode
+      ? trimButtonLabel(`${name} (${mapping.refCode})`)
+      : trimButtonLabel(name);
+
+    return {
+      label,
+      value: mapping.refCode,
+      ref: mapping.refCode,
+      description: mapping.shopName || mapping.refCode,
+      mapping,
+    };
+  });
+}
+
+function getGoodsCrmShopMappings(msg) {
+  const store = readStore();
+  const keys = getGoodsCrmTelegramLinkKeys(msg);
+
+  for (const key of keys) {
+    const shopsByRefCode = store.crmShopsByTelegramUser && store.crmShopsByTelegramUser[key];
+    const shops = Object.values(shopsByRefCode || {})
+      .filter((mapping) => mapping && mapping.refCode)
+      .sort(compareGoodsCrmShopMappings);
+
+    if (shops.length) {
+      return shops;
+    }
+  }
+
+  const legacy = [];
+
+  for (const key of keys) {
+    const mapping = store.crmShopByTelegramUser && store.crmShopByTelegramUser[key];
+
+    if (mapping && mapping.refCode) {
+      legacy.push(mapping);
+    }
+  }
+
+  return legacy.sort(compareGoodsCrmShopMappings);
+}
+
+function getGoodsCrmShopMapping(msg, refCode) {
+  const normalizedRefCode = normalizeGoodsCrmRefCode(refCode);
+  const mappings = getGoodsCrmShopMappings(msg);
+
+  if (normalizedRefCode) {
+    return mappings.find((mapping) => normalizeGoodsCrmRefCode(mapping.refCode) === normalizedRefCode) || null;
+  }
+
+  const selected = getSelectedGoodsCrmShopRefCode(msg);
+
+  if (selected) {
+    const mapping = mappings.find((item) => normalizeGoodsCrmRefCode(item.refCode) === selected);
+    if (mapping) {
+      return mapping;
+    }
+  }
+
+  return mappings[0] || null;
 }
 
 function getGoodsCrmTelegramLinkKey(msg) {
   return `${String(msg.from.id)}:${String(msg.chat.id)}`;
+}
+
+function getGoodsCrmTelegramLinkKeys(msg) {
+  return [
+    getGoodsCrmTelegramLinkKey(msg),
+    String(msg.from.id),
+  ];
+}
+
+function getSelectedGoodsCrmShopRefCode(msg) {
+  const store = readStore();
+  const selected = store.selectedCrmShopByTelegramUser || {};
+
+  for (const key of getGoodsCrmTelegramLinkKeys(msg)) {
+    const refCode = normalizeGoodsCrmRefCode(selected[key]);
+
+    if (refCode) {
+      return refCode;
+    }
+  }
+
+  return '';
+}
+
+async function selectGoodsCrmShopForChat(msg, mapping) {
+  if (!mapping || !mapping.refCode) {
+    return;
+  }
+
+  const store = readStore();
+  const key = getGoodsCrmTelegramLinkKey(msg);
+
+  if (!store.crmShopsByTelegramUser[key]) {
+    store.crmShopsByTelegramUser[key] = {};
+  }
+
+  store.crmShopsByTelegramUser[key][mapping.refCode] = mapping;
+  store.selectedCrmShopByTelegramUser[key] = mapping.refCode;
+  store.crmShopByTelegramUser[key] = mapping;
+  await writeStore(store);
+}
+
+function getCreateFlowGoodsCrmShopMapping(msg, flowData) {
+  const mapping = createGoodsCrmShopMappingFromFlowData(flowData);
+
+  if (mapping) {
+    return mapping;
+  }
+
+  return getGoodsCrmShopMapping(msg);
+}
+
+function getShipmentGoodsCrmShopMapping(msg, shipment) {
+  if (shipment && shipment.crmShop && shipment.crmShop.refCode) {
+    return shipment.crmShop;
+  }
+
+  return getGoodsCrmShopMapping(msg);
+}
+
+function createGoodsCrmShopMappingFromFlowData(data) {
+  if (!data || !data.CrmShopRefCode && !data.CrmShop) {
+    return null;
+  }
+
+  return {
+    crmShopId: data.CrmShopId || '',
+    refCode: normalizeGoodsCrmRefCode(data.CrmShopRefCode || data.CrmShop),
+    shopName: data.CrmShopName || data.CrmShopDescription || '',
+    defaultFopId: data.CrmShopDefaultFopId || '',
+    defaultFopName: data.CrmShopDefaultFopName || '',
+  };
+}
+
+function formatGoodsCrmShopName(mapping) {
+  if (!mapping) {
+    return '';
+  }
+
+  return mapping.shopName || mapping.refCode || '';
+}
+
+function compareGoodsCrmShopMappings(left, right) {
+  const leftName = formatGoodsCrmShopName(left);
+  const rightName = formatGoodsCrmShopName(right);
+  return leftName.localeCompare(rightName, 'uk');
 }
 
 async function updateShipmentGoodsCrmStatus(number, crm) {
@@ -5082,7 +5358,7 @@ function createGoodsCrmTtnPayload(msg, number, shipment, mapping) {
     createdAt: shipment.createdAt,
     description: shipment.description || '',
     fopId: mapping && mapping.defaultFopId || '',
-    fopName: mapping && mapping.defaultFopName || shipment.apiKeyAlias || '',
+    fopName: mapping && mapping.defaultFopName || '',
     cabinetName: shipment.apiKeyAlias || '',
     senderName: shipment.senderName || '',
     senderContactName: shipment.senderContactName || '',

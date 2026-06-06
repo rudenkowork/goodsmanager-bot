@@ -1,5 +1,6 @@
 const CITY_CHOICES_LIMIT = 1000;
 const CHOICE_PAGE_SIZE = 8;
+const CREATE_TTN_FLOW_VERSION = 2;
 const WAREHOUSE_SEARCH_LIMIT = 50;
 const POSTOMAT_TYPE_REFS = [
   '95dc212d-479c-4ffb-a8ab-8c1b9073d0bc',
@@ -45,7 +46,7 @@ const BUTTONS = {
   keys: 'Кабінети НП',
   addKey: 'Додати кабінет',
   addDefaultWarehouse: 'Додати стандартне відділення',
-  goodsCrmShop: 'Код GoodsCRM',
+  goodsCrmShop: 'Коди магазинів',
   sendGoodsCrmTtn: 'Передати ТТН у CRM',
   aboutBot: 'Про бота',
   cities: 'Знайти місто',
@@ -135,6 +136,11 @@ const PAYMENT_TYPE_CHOICES = [
 ];
 
 const CREATE_TTN_FIELDS = [
+  {
+    key: 'CrmShop',
+    prompt: 'Оберіть магазин, у який передати ТТН.',
+    goodsCrmShop: true,
+  },
   {
     key: 'Description',
     prompt: 'Що відправляємо? Напишіть короткий опис посилки для накладної.',
@@ -229,6 +235,7 @@ module.exports = {
   CHOICE_PAGE_SIZE,
   CITY_CHOICES_LIMIT,
   CREATE_TTN_FIELDS,
+  CREATE_TTN_FLOW_VERSION,
   DELIVERY_TYPE_CHOICES,
   MAIN_CITY_BY_AREA,
   PAYMENT_TYPE_CHOICES,

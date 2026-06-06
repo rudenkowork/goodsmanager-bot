@@ -86,6 +86,8 @@ The runtime store contains:
 - `defaultSenders`: saved sender/contact pairs per local bot user and cabinet;
 - `defaultSenderWarehouses`: saved sender branches per local bot user and cabinet;
 - `crmShopByTelegramUser`: Telegram user id plus chat id to GoodsCRM shop mapping;
+- `crmShopsByTelegramUser`: multiple connected CRM shops by Telegram user id plus chat id;
+- `selectedCrmShopByTelegramUser`: last selected CRM shop per Telegram user id plus chat id;
 - `shipments`: created TTNs and raw API responses;
 - `flows`: active Telegram conversation flows;
 - `botMessagesByChat`: bot message ids used for chat cleanup.
@@ -227,30 +229,33 @@ The guided create flow is configured in `src/createTtnConfig.js`.
 Current flow:
 
 1. Choose Nova Poshta cabinet, or use the only available cabinet automatically.
-2. Enter shipment description.
-3. Enter weight.
-4. Enter declared cost.
-5. Show a sender-section notice.
-6. Use the first sender returned by the selected Nova Poshta API key automatically.
-7. Use the first sender contact with a phone automatically, or the first contact if none have a phone.
-8. If contact phone exists, use it automatically and skip sender phone input.
-9. If no contact phone exists, ask for sender phone manually.
-10. If saved sender branches exist, choose one by name or choose another branch.
-11. If no saved sender branch is used, choose sender area.
-12. Choose sender settlement type: city, urban-type settlement, settlement, or village.
-13. Choose sender settlement.
-14. Enter sender branch number. Sender postomat is not offered.
-15. Validate sender branch through Nova Poshta API and confirm full address.
-16. Show a recipient-section notice.
-17. Choose recipient area.
-18. Choose recipient settlement type.
-19. Choose recipient settlement.
-20. Choose recipient delivery point type: branch or postomat.
-21. Enter recipient branch/postomat number.
-22. Validate recipient point through Nova Poshta API and confirm full address.
-23. Enter recipient full name.
-24. Enter recipient phone.
-25. Build Nova Poshta `methodProperties` and create TTN.
+2. If CRM integration is configured, choose one connected shop by its CRM database name.
+3. Enter shipment description.
+4. Enter weight.
+5. Enter declared cost.
+6. Show a sender-section notice.
+7. Use the first sender returned by the selected Nova Poshta API key automatically.
+8. Use the first sender contact with a phone automatically, or the first contact if none have a phone.
+9. Ask whether the TTN has no payment, cash on delivery, or payment control.
+10. Ask payment amount only for cash on delivery or payment control.
+11. If saved sender branches exist, choose one by name or choose another branch.
+12. If no saved sender branch is used, choose sender area.
+13. Choose sender settlement type: city, urban-type settlement, settlement, or village.
+14. Choose sender settlement.
+15. Enter sender branch number. Sender postomat is not offered.
+16. Validate sender branch through Nova Poshta API and confirm full address.
+17. If contact phone exists, use it automatically and skip sender phone input.
+18. If no contact phone exists, ask for sender phone manually.
+19. Show a recipient-section notice.
+20. Choose recipient area.
+21. Choose recipient settlement type.
+22. Choose recipient settlement.
+23. Choose recipient delivery point type: branch or postomat.
+24. Enter recipient branch/postomat number.
+25. Validate recipient point through Nova Poshta API and confirm full address.
+26. Enter recipient full name.
+27. Enter recipient phone.
+28. Build Nova Poshta `methodProperties` and create TTN.
 
 Important:
 
@@ -262,6 +267,7 @@ Important:
 - `PayerType` is not asked in UX. It uses the default in `buildTtnProperties`.
 - `PaymentMethod` is not asked in UX. It defaults to `Cash` in `buildTtnProperties`.
 - If Nova Poshta rejects TTN creation, do not show raw API errors to normal users. Keep the draft flow alive, explain the likely issue in Ukrainian, and offer a clear correction step such as changing weight, declared cost, or recipient delivery point.
+- If CRM rejects the created TTN, do not undo the Nova Poshta TTN. Store the CRM status and show a concise Ukrainian hint about the shop code or default FOP.
 
 ## Nova Poshta API Rules
 
