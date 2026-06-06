@@ -135,7 +135,7 @@ GoodsCRM integration:
 1. A logged-in user enters the shop `Код Telegram` through `Код GoodsCRM` in settings or `/crmshop code`.
 2. The bot resolves the code through `POST /api/bot/shops/resolve`.
 3. The bot stores the Telegram-user-to-shop mapping in `crmShopByTelegramUser`.
-4. After a TTN is created in Nova Poshta and saved locally, the bot sends it to `POST /api/bot/ttns` with the saved `refCode`.
+4. After a TTN is created in Nova Poshta and saved locally, the bot sends it to `POST /api/bot/ttns` with the saved `refCode`, cabinet alias, and sender details.
 5. CRM sync success or failure is stored on the shipment as `shipment.crm`; CRM errors do not undo Nova Poshta TTN creation.
 
 ## Validation
