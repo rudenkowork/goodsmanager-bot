@@ -49,6 +49,7 @@ const {
   normalizeGoodsCrmRefCode,
   pushTtnToGoodsCrm,
   resolveGoodsCrmShop,
+  upsertFopToGoodsCrm,
 } = require('./src/goodsCrm');
 const {
   chunkText,
@@ -1396,12 +1397,16 @@ async function handleAddKeyFlowInput(msg, flow, text) {
     createdAt: new Date().toISOString(),
   };
   store.selectedApiKeyByUser[user.login] = alias;
+  const fopSyncLine = await syncApiKeyFopToGoodsCrm(msg, store, alias);
   delete store.flows[String(msg.from.id)];
   await writeStore(store);
 
   await sendText(
     msg.chat.id,
-    `Готово, кабінет "${alias}" збережено. Якщо це єдиний кабінет, я використаю його для ТТН автоматично.`,
+    [
+      `Готово, кабінет "${alias}" збережено. Якщо це єдиний кабінет, я використаю його для ТТН автоматично.`,
+      fopSyncLine,
+    ].filter(Boolean).join('\n'),
     menuOptions(msg)
   );
 }
@@ -1442,6 +1447,8 @@ async function connectGoodsCrmShop(msg, refCodeInput, options = {}) {
     const defaultFop = resolved.defaultFop || null;
     const linked = await saveGoodsCrmTelegramLink(msg, user, refCode, shop, defaultFop);
     const store = readStore();
+    const selectedAlias = store.selectedApiKeyByUser[user.login] || '';
+    const fopSyncLine = await syncApiKeyFopToGoodsCrm(msg, store, selectedAlias);
 
     delete store.flows[String(msg.from.id)];
     await writeStore(store);
@@ -1453,6 +1460,7 @@ async function connectGoodsCrmShop(msg, refCodeInput, options = {}) {
         `Магазин: ${shop.name || shop.refCode || refCode}`,
         defaultFop && defaultFop.name ? `ФОП за замовчуванням: ${defaultFop.name}` : '',
         linked ? 'Звʼязок із цим Telegram-чатом збережено в CRM.' : '',
+        fopSyncLine,
         'Під час створення ТТН оберіть цей магазин зі списку.',
       ].filter(Boolean).join('\n'),
       menuOptions(msg)
@@ -1518,6 +1526,94 @@ async function saveGoodsCrmTelegramLink(msg, user, refCode, shop, defaultFop) {
 
   await writeStore(store);
   return linkedInCrm;
+}
+
+async function syncApiKeyFopToGoodsCrm(msg, store, alias) {
+  const normalizedAlias = normalizeAlias(alias);
+  const apiKeyRecord = store.apiKeys && store.apiKeys[normalizedAlias];
+
+  if (!normalizedAlias || !apiKeyRecord || !apiKeyRecord.apiKey) {
+    return '';
+  }
+
+  if (!isGoodsCrmConfigured() || apiKeyRecord.apiKey === 'MOCK') {
+    return '';
+  }
+
+  const mapping = getGoodsCrmShopMapping(msg);
+
+  if (!mapping || !mapping.refCode) {
+    return `CRM: ФОП не передано, бо магазин CRM ще не підключено. Додайте "${BUTTONS.goodsCrmShop}".`;
+  }
+
+  try {
+    const result = await upsertFopToGoodsCrm({
+      refCode: mapping.refCode,
+      fopName: normalizedAlias,
+      apiKey: apiKeyRecord.apiKey,
+      telegramUserId: msg.from.id,
+      telegramChatId: msg.chat.id,
+      username: msg.from && msg.from.username || '',
+      shopName: mapping.shopName || '',
+    });
+
+    rememberGoodsCrmFopForApiKey(store, msg, normalizedAlias, mapping, result);
+
+    const shop = result.shop || {};
+    const fop = result.fop || {};
+    return `CRM: ФОП "${fop.name || normalizedAlias}" збережено для ${shop.name || mapping.shopName || shop.refCode || mapping.refCode}.`;
+  } catch (error) {
+    console.warn(`GoodsCRM FOP sync failed for "${normalizedAlias}":`, error.message);
+    return `CRM: кабінет збережено в боті, але ФОП не передано в CRM. ${getFriendlyGoodsCrmMessage(error)}`;
+  }
+}
+
+function rememberGoodsCrmFopForApiKey(store, msg, alias, mapping, result) {
+  const key = store.apiKeys && store.apiKeys[alias];
+  const shop = result && result.shop || {};
+  const fop = result && result.fop || {};
+  const refCode = normalizeGoodsCrmRefCode(shop.refCode || mapping.refCode);
+
+  if (!key || !refCode || !fop.id) {
+    return;
+  }
+
+  if (!key.crmFopsByRefCode || typeof key.crmFopsByRefCode !== 'object' || Array.isArray(key.crmFopsByRefCode)) {
+    key.crmFopsByRefCode = {};
+  }
+
+  key.crmFopsByRefCode[refCode] = {
+    refCode,
+    crmShopId: shop.id || mapping.crmShopId || '',
+    shopName: shop.name || mapping.shopName || '',
+    fopId: fop.id || '',
+    fopName: fop.name || alias,
+    apiKeyLast4: fop.apiKeyLast4 || '',
+    isDefault: Boolean(fop.isDefault),
+    syncedAt: new Date().toISOString(),
+  };
+
+  if (fop.isDefault) {
+    updateStoredGoodsCrmMappingFop(store, msg, refCode, fop);
+  }
+}
+
+function updateStoredGoodsCrmMappingFop(store, msg, refCode, fop) {
+  for (const key of getGoodsCrmTelegramLinkKeys(msg)) {
+    const shops = store.crmShopsByTelegramUser && store.crmShopsByTelegramUser[key];
+    const mapping = shops && shops[refCode];
+
+    if (mapping) {
+      mapping.defaultFopId = fop.id || '';
+      mapping.defaultFopName = fop.name || '';
+    }
+
+    const legacy = store.crmShopByTelegramUser && store.crmShopByTelegramUser[key];
+    if (legacy && normalizeGoodsCrmRefCode(legacy.refCode) === refCode) {
+      legacy.defaultFopId = fop.id || '';
+      legacy.defaultFopName = fop.name || '';
+    }
+  }
 }
 
 async function handleDefaultSenderWarehouseFlowInput(msg, flow, text) {
@@ -4664,6 +4760,14 @@ function getFriendlyGoodsCrmMessage(error) {
     return 'CRM просить вказати ФОП для цієї ТТН. Додайте ФОП за замовчуванням у магазині CRM і підключіть код ще раз.';
   }
 
+  if (code === 'fop_name_required') {
+    return 'CRM просить назву ФОП. Перевірте назву кабінету в боті.';
+  }
+
+  if (code === 'nova_poshta_api_key_invalid') {
+    return 'CRM не прийняла API-ключ Нової пошти. Перевірте ключ у кабінеті Нової пошти.';
+  }
+
   if (code === 'invalid_request' || code === 'telegram_identity_required') {
     return 'CRM не прийняла дані запиту. Перевірте код магазину й номери ТТН.';
   }
@@ -4899,9 +5003,17 @@ async function handleAddKey(msg, args) {
     createdAt: new Date().toISOString(),
   };
   store.selectedApiKeyByUser[currentUser.login] = alias;
+  const fopSyncLine = await syncApiKeyFopToGoodsCrm(msg, store, alias);
 
   await writeStore(store);
-  await sendText(msg.chat.id, `Готово, кабінет Нової пошти збережено як "${alias}".`, menuOptions(msg));
+  await sendText(
+    msg.chat.id,
+    [
+      `Готово, кабінет Нової пошти збережено як "${alias}".`,
+      fopSyncLine,
+    ].filter(Boolean).join('\n'),
+    menuOptions(msg)
+  );
 }
 
 async function handleDeleteKey(msg, args) {
@@ -5355,6 +5467,7 @@ async function updateShipmentGoodsCrmStatus(number, crm) {
 }
 
 function createGoodsCrmTtnPayload(msg, number, shipment, mapping) {
+  const fop = getGoodsCrmFopForShipment(msg, shipment, mapping);
   const payload = {
     ttn: number,
     novaPostRef: shipment.ref || '',
@@ -5362,8 +5475,8 @@ function createGoodsCrmTtnPayload(msg, number, shipment, mapping) {
     createdBy: formatGoodsCrmCreatedBy(msg, shipment.createdBy),
     createdAt: shipment.createdAt,
     description: shipment.description || '',
-    fopId: mapping && mapping.defaultFopId || '',
-    fopName: mapping && mapping.defaultFopName || '',
+    fopId: fop.id,
+    fopName: fop.name,
     cabinetName: shipment.apiKeyAlias || '',
     senderName: shipment.senderName || '',
     senderContactName: shipment.senderContactName || '',
@@ -5385,14 +5498,15 @@ function createGoodsCrmTtnPayload(msg, number, shipment, mapping) {
 }
 
 function createGoodsCrmManualTtnPayload(msg, number, mapping) {
+  const fop = getGoodsCrmFopForSelectedApiKey(msg, mapping);
   const payload = {
     ttn: number,
     sourceLabel: DEFAULT_SOURCE_LABEL,
     createdBy: formatGoodsCrmCreatedBy(msg, ''),
     createdAt: new Date().toISOString(),
     description: 'Submitted from Telegram bot',
-    fopId: mapping && mapping.defaultFopId || '',
-    fopName: mapping && mapping.defaultFopName || '',
+    fopId: fop.id,
+    fopName: fop.name,
   };
 
   if (!payload.fopId && !payload.fopName) {
@@ -5401,6 +5515,63 @@ function createGoodsCrmManualTtnPayload(msg, number, mapping) {
   }
 
   return payload;
+}
+
+function getGoodsCrmFopForShipment(msg, shipment, mapping) {
+  const fop = getGoodsCrmFopForApiKeyAlias(shipment && shipment.apiKeyAlias, mapping);
+
+  if (fop.id || fop.name) {
+    return fop;
+  }
+
+  return getGoodsCrmFopFromMapping(mapping);
+}
+
+function getGoodsCrmFopForSelectedApiKey(msg, mapping) {
+  const user = getSessionUser(msg);
+  const store = readStore();
+  const alias = user && store.selectedApiKeyByUser ? store.selectedApiKeyByUser[user.login] : '';
+  const fop = findGoodsCrmFopOnApiKey(store, alias, mapping);
+
+  if (fop.id || fop.name) {
+    return fop;
+  }
+
+  return getGoodsCrmFopFromMapping(mapping);
+}
+
+function getGoodsCrmFopForApiKeyAlias(alias, mapping) {
+  const store = readStore();
+  return findGoodsCrmFopOnApiKey(store, alias, mapping);
+}
+
+function findGoodsCrmFopOnApiKey(store, alias, mapping) {
+  const refCode = normalizeGoodsCrmRefCode(mapping && mapping.refCode);
+  const normalizedAlias = normalizeAlias(alias);
+  const key = normalizedAlias && store.apiKeys ? store.apiKeys[normalizedAlias] : null;
+  const fops = key && key.crmFopsByRefCode && typeof key.crmFopsByRefCode === 'object'
+    ? key.crmFopsByRefCode
+    : {};
+  const fop = refCode ? fops[refCode] : null;
+
+  if (!fop || typeof fop !== 'object') {
+    return {
+      id: '',
+      name: '',
+    };
+  }
+
+  return {
+    id: String(fop.fopId || ''),
+    name: String(fop.fopName || ''),
+  };
+}
+
+function getGoodsCrmFopFromMapping(mapping) {
+  return {
+    id: mapping && mapping.defaultFopId || '',
+    name: mapping && mapping.defaultFopName || '',
+  };
 }
 
 function parseGoodsCrmTtnNumbers(text) {

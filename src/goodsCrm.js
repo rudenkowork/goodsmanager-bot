@@ -75,6 +75,34 @@ async function pushTtnToGoodsCrm(payload) {
   });
 }
 
+async function upsertFopToGoodsCrm(payload) {
+  const refCode = normalizeGoodsCrmRefCode(payload && payload.refCode);
+  const fopName = String(payload && (payload.fopName || payload.name) || '').trim();
+  const apiKey = String(payload && payload.apiKey || '').trim();
+
+  if (!refCode) {
+    throw createGoodsCrmError('missing_ref_code', 'GoodsCRM shop code is missing.');
+  }
+
+  if (!fopName) {
+    throw createGoodsCrmError('fop_name_required', 'GoodsCRM FOP name is missing.');
+  }
+
+  if (!apiKey) {
+    throw createGoodsCrmError('missing_api_key', 'Nova Poshta API key is missing.');
+  }
+
+  return callGoodsCrm('/api/bot/fops', {
+    refCode,
+    fopName,
+    apiKey,
+    telegramUserId: String(payload.telegramUserId || ''),
+    telegramChatId: String(payload.telegramChatId || payload.chatId || ''),
+    username: String(payload.username || ''),
+    shopName: String(payload.shopName || ''),
+  });
+}
+
 async function readStoreFromGoodsCrm() {
   const result = await callGoodsCrm('/api/bot/store', {
     action: 'read',
@@ -189,6 +217,14 @@ function normalizeGoodsCrmErrorCode(message, statusCode) {
     return 'fop_required';
   }
 
+  if (normalized.includes('fop_name_required')) {
+    return 'fop_name_required';
+  }
+
+  if (normalized.includes('nova_poshta_api_key_invalid')) {
+    return 'nova_poshta_api_key_invalid';
+  }
+
   if (normalized.includes('telegram_identity_required')) {
     return 'telegram_identity_required';
   }
@@ -294,5 +330,6 @@ module.exports = {
   pushTtnToGoodsCrm,
   readStoreFromGoodsCrm,
   resolveGoodsCrmShop,
+  upsertFopToGoodsCrm,
   writeStoreToGoodsCrm,
 };
