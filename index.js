@@ -1345,6 +1345,8 @@ async function handleAddUserFlowInput(msg, flow, text) {
     return;
   }
 
+  await deleteSensitiveIncomingMessage(msg);
+
   const store = readStore();
   const login = flow.data.login;
 
@@ -4794,6 +4796,8 @@ async function handleAddUser(msg, args) {
     return;
   }
 
+  await deleteSensitiveIncomingMessage(msg);
+
   const login = normalizeLogin(parts[0]);
   const password = parts.slice(1).join(' ');
   const store = readStore();
@@ -5353,6 +5357,7 @@ async function updateShipmentGoodsCrmStatus(number, crm) {
 function createGoodsCrmTtnPayload(msg, number, shipment, mapping) {
   const payload = {
     ttn: number,
+    novaPostRef: shipment.ref || '',
     sourceLabel: DEFAULT_SOURCE_LABEL,
     createdBy: formatGoodsCrmCreatedBy(msg, shipment.createdBy),
     createdAt: shipment.createdAt,
@@ -5805,5 +5810,17 @@ async function sendText(chatId, text, options) {
   for (let index = 0; index < chunks.length; index += 1) {
     const messageOptions = index === chunks.length - 1 ? options : undefined;
     await bot.sendMessage(chatId, chunks[index], messageOptions);
+  }
+}
+
+async function deleteSensitiveIncomingMessage(msg) {
+  if (!bot || !msg || !msg.chat || !msg.message_id) {
+    return;
+  }
+
+  try {
+    await bot.deleteMessage(msg.chat.id, msg.message_id);
+  } catch (error) {
+    console.warn('Failed to delete sensitive user message:', error.message);
   }
 }
