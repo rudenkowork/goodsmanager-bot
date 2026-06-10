@@ -75,6 +75,29 @@ async function pushTtnToGoodsCrm(payload) {
   });
 }
 
+async function readStoreFromGoodsCrm() {
+  const result = await callGoodsCrm('/api/bot/store', {
+    action: 'read',
+  });
+
+  if (!result || !result.store || typeof result.store !== 'object' || Array.isArray(result.store)) {
+    return null;
+  }
+
+  return result.store;
+}
+
+async function writeStoreToGoodsCrm(store) {
+  if (!store || typeof store !== 'object' || Array.isArray(store)) {
+    throw createGoodsCrmError('invalid_store', 'GoodsCRM store payload must be an object.');
+  }
+
+  return callGoodsCrm('/api/bot/store', {
+    action: 'write',
+    store,
+  });
+}
+
 async function callGoodsCrm(path, payload) {
   const config = getGoodsCrmConfig();
 
@@ -269,5 +292,7 @@ module.exports = {
   linkTelegramToGoodsCrmShop,
   normalizeGoodsCrmRefCode,
   pushTtnToGoodsCrm,
+  readStoreFromGoodsCrm,
   resolveGoodsCrmShop,
+  writeStoreToGoodsCrm,
 };

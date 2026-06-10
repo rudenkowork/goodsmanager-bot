@@ -26,7 +26,7 @@ WEBHOOK_BASE_URL=https://your-domain.example
 Keep `BOT_INGEST_SECRET` secret too. It must match the CRM server variable with the same name.
 Do not set `DATABASE_URL` in this bot service. The CRM owns the Neon/Postgres database, and the bot writes CRM data only through `/api/bot/*`.
 
-The bot keeps small Telegram UX/session cache data in local JSON. Render's free ephemeral filesystem can lose that cache after restarts; CRM data remains durable because it is written through the CRM API.
+When `GOODSCRM_BASE_URL` and `BOT_INGEST_SECRET` are set, the bot stores Telegram runtime state in the CRM database through `/api/bot/store`. The local JSON file is only a backup. If CRM integration is missing, Render's free ephemeral filesystem can still lose local-only cache after restarts.
 
 ## Start Command
 
@@ -53,6 +53,6 @@ You can use `/health` as the Render health check path.
 - Keep one Render instance only.
 - Do not run polling and webhook mode at the same time for the same Telegram bot token.
 - Do not point this bot at the CRM database.
-- Use `STORE_PATH` only if your Render plan provides durable disk storage for local cache.
+- Use `STORE_PATH` only for a local backup path or when CRM integration is not configured.
 - The first message after Render sleeps may be delayed while Render starts the service.
 - If you need instant replies all day, use a paid always-on instance or a host that supports long-running workers.

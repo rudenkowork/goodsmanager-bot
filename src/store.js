@@ -2,18 +2,53 @@ const fs = require('fs');
 const path = require('path');
 
 const { CREATE_TTN_FLOW_VERSION } = require('./createTtnConfig');
+const {
+  isGoodsCrmConfigured,
+  readStoreFromGoodsCrm,
+  writeStoreToGoodsCrm,
+} = require('./goodsCrm');
 
 const DEFAULT_DATA_DIR = path.join(__dirname, '..', 'data');
 const STORE_PATH = getStorePath();
 const DATA_DIR = path.dirname(STORE_PATH);
 
 let storeCache = null;
+let crmStoreEnabled = false;
+let writeQueue = Promise.resolve();
 
 async function ensureStoreFile(config) {
   const initialStore = createEmptyStore(config);
 
   ensureJsonStore(initialStore);
-  console.log(`Store backend: local JSON cache (${STORE_PATH}).`);
+  crmStoreEnabled = isGoodsCrmConfigured();
+
+  if (!crmStoreEnabled) {
+    console.log(`Store backend: local JSON cache (${STORE_PATH}).`);
+    return;
+  }
+
+  try {
+    const remoteStore = await readStoreFromGoodsCrm();
+
+    if (remoteStore) {
+      storeCache = normalizeStore(remoteStore, initialStore.config);
+      writeJsonStore(storeCache);
+    } else {
+      storeCache = normalizeStore(storeCache, initialStore.config);
+      await writeStoreToGoodsCrm(storeCache);
+    }
+
+    console.log(`Store backend: GoodsCRM database via /api/bot/store, local backup at ${STORE_PATH}.`);
+  } catch (error) {
+    crmStoreEnabled = false;
+
+    if (isProductionRuntime()) {
+      throw new Error(`GoodsCRM store is unavailable: ${error.message}`);
+    }
+
+    console.warn(`GoodsCRM store unavailable, using local JSON cache: ${error.message}`);
+    console.log(`Store backend: local JSON cache (${STORE_PATH}).`);
+  }
 }
 
 function ensureJsonStore(initialStore) {
@@ -45,11 +80,21 @@ function readStore() {
 function writeStore(store) {
   storeCache = normalizeStore(cloneStore(store), {});
   writeJsonStore(storeCache);
-  return Promise.resolve();
+
+  if (!crmStoreEnabled) {
+    return Promise.resolve();
+  }
+
+  const snapshot = cloneStore(storeCache);
+  writeQueue = writeQueue
+    .catch(() => {})
+    .then(() => writeStoreToGoodsCrm(snapshot));
+
+  return writeQueue;
 }
 
 async function flushStoreWrites() {
-  return Promise.resolve();
+  return writeQueue;
 }
 
 async function closeStore() {
@@ -247,6 +292,14 @@ function getStorePath() {
   }
 
   return path.join(DEFAULT_DATA_DIR, 'store.json');
+}
+
+function isProductionRuntime() {
+  return process.env.NODE_ENV === 'production'
+    || Boolean(process.env.RAILWAY_ENVIRONMENT)
+    || Boolean(process.env.RAILWAY_SERVICE_ID)
+    || Boolean(process.env.RENDER)
+    || Boolean(process.env.RENDER_SERVICE_ID);
 }
 
 function readJsonStore() {

@@ -48,12 +48,14 @@ Do not put low-level API clients, store plumbing, password hashing, or generic v
 - GoodsCRM bot-ingest API calls.
 - Shop Telegram-code resolution.
 - Created TTN push requests with the configured bot secret.
+- Remote bot store reads/writes through `/api/bot/store`.
 
 `src/store.js`
 
 - Store creation, reading, and writing.
-- Local JSON cache through `data/store.json`, `STORE_PATH`, or `RAILWAY_VOLUME_MOUNT_PATH`.
-- Telegram UX/session state only. The CRM is the canonical database for shops, TTNs, FOP records, permissions, and audit history.
+- CRM database persistence through `/api/bot/store` when GoodsCRM integration is configured.
+- Local JSON backup through `data/store.json`, `STORE_PATH`, or `RAILWAY_VOLUME_MOUNT_PATH`.
+- Telegram UX/session state only. The CRM is the canonical database for shops, TTNs, FOP records, permissions, audit history, and production bot runtime state.
 - Active flow get/set/clear.
 - Saved default sender/contact pairs per local user and Nova Poshta cabinet.
 - Saved default sender branches per local user and Nova Poshta cabinet.
@@ -193,4 +195,5 @@ WEBHOOK_BASE_URL=https://your-public-domain.example
 
 - Use webhook mode on free web services: `BOT_MODE=webhook`.
 - Do not set `DATABASE_URL` for this bot.
-- Render's ephemeral filesystem can lose the bot's local cache; CRM data remains durable because it is written through the CRM API.
+- Set `GOODSCRM_BASE_URL` and `BOT_INGEST_SECRET` so `/api/bot/store` keeps bot runtime state in the CRM database.
+- Render's ephemeral filesystem can lose local-only cache; CRM-backed store remains durable through the CRM API.
