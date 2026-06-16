@@ -280,6 +280,13 @@ function applyPaymentProperties(methodProperties, data) {
 
 function isPaymentControlUnavailableError(error) {
   const details = getNovaPostErrorDetails(error).toLowerCase();
+  const codes = getNovaPostErrorCodes(error);
+
+  if (codes.includes('20000200035')
+    || codes.includes('20000203614')
+    || codes.includes('20003604642')) {
+    return true;
+  }
 
   if (details.includes('only moneytransfer or afterpayment enable')) {
     return true;
@@ -288,7 +295,20 @@ function isPaymentControlUnavailableError(error) {
   return details.includes('afterpaymentongoodscost')
     && (details.includes('недоступ')
       || details.includes('unavailable')
+      || details.includes('disabled')
+      || details.includes('лише для відділення-відділення')
+      || details.includes('available only for warehousewarehouse')
       || details.includes('afterpayment enable'));
+}
+
+function getNovaPostErrorCodes(error) {
+  if (!Array.isArray(error && error.novaPostErrorCodes)) {
+    return [];
+  }
+
+  return error.novaPostErrorCodes
+    .map((code) => String(code || '').trim())
+    .filter(Boolean);
 }
 
 function getNovaPostErrorDetails(error) {

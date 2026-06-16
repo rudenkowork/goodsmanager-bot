@@ -85,6 +85,7 @@ const BUTTONS = {
   changeRecipientCity: 'Змінити місто отримувача',
   changeSenderCity: 'Змінити місто відправника',
   changeCabinet: 'Змінити кабінет НП',
+  changePaymentType: 'Змінити тип оплати',
   withoutPaymentControl: 'Створити без контролю оплати',
   useCashOnDelivery: 'Використати накладений платіж',
   changePaymentAmount: 'Змінити суму оплати',

@@ -3154,8 +3154,8 @@ async function handleCreateTtnGoodsCrmShopChoice(msg, flow, text) {
   await sendText(
     msg.chat.id,
     [
-      `Магазин: ${formatGoodsCrmShopName(mapping)}`,
-      mapping.defaultFopName ? `ФОП: ${mapping.defaultFopName}` : '',
+      `Магазин CRM: ${formatGoodsCrmShopName(mapping)}`,
+      mapping.defaultFopName ? `ФОП у CRM: ${mapping.defaultFopName}` : '',
     ].filter(Boolean).join('\n')
   );
   await askNextCreateTtnField(msg, flow);
@@ -4483,6 +4483,17 @@ async function handleCreateTtnCreationError(msg, flow, error) {
     return false;
   }
 
+  console.error('Nova Post TTN creation failed:', JSON.stringify({
+    codes: getNovaPostErrorCodes(error),
+    errors: error.novaPostErrors || [],
+    translatedErrors: error.novaPostTranslatedErrors || [],
+    paymentType: flow.data && flow.data.PaymentType || '',
+    paymentAmount: flow.data && flow.data.PaymentAmount || '',
+    cost: flow.data && flow.data.Cost || '',
+    weight: flow.data && flow.data.Weight || '',
+    recipientPoint: flow.data && flow.data.RecipientAddressNameDescription || '',
+  }));
+
   const correction = getCreateTtnErrorCorrection(error, flow.data);
   flow.mode = 'createTtnCorrectionChoice';
   flow.pendingChoices = correction.choices;
@@ -4496,6 +4507,121 @@ function getCreateTtnErrorCorrection(error, data) {
   const details = getNovaPostErrorDetails(error);
   const normalized = details.toLowerCase();
   const maxWeight = getMaxAllowedWeight(details);
+
+  if (hasNovaPostErrorCode(error, ['20000204637', '20000304638'])) {
+    return createMultipleFieldCorrection(
+      [
+        'Не вдалося створити ТТН.',
+        'У цьому кабінеті Нова пошта не дозволяє накладений платіж.',
+        'Для ФОП або бізнес-відправника оберіть "Контроль оплати" або інший кабінет НП.',
+      ].join('\n'),
+      [
+        { label: BUTTONS.changePaymentType, fieldKey: 'PaymentType' },
+        { label: BUTTONS.changeCabinet, fieldKey: 'apiKeyAlias' },
+      ]
+    );
+  }
+
+  if (hasNovaPostErrorCode(error, ['20000200031', '20000200032', '20000202889'])) {
+    return createMultipleFieldCorrection(
+      [
+        'Не вдалося створити ТТН.',
+        'Для вибраного поштомата контроль оплати недоступний.',
+        'Оберіть відділення або змініть тип оплати.',
+      ].join('\n'),
+      [
+        { label: BUTTONS.changeRecipientDeliveryPoint, fieldKey: 'RecipientAddressName' },
+        { label: BUTTONS.changePaymentType, fieldKey: 'PaymentType' },
+      ]
+    );
+  }
+
+  if (hasNovaPostErrorCode(error, ['20000200036'])) {
+    return createMultipleFieldCorrection(
+      [
+        'Не вдалося створити ТТН.',
+        'У вибраному місті одержувача контроль оплати недоступний.',
+        'Оберіть інший населений пункт або змініть тип оплати.',
+      ].join('\n'),
+      [
+        { label: BUTTONS.changeRecipientCity, fieldKey: 'AreaRecipient' },
+        { label: BUTTONS.changePaymentType, fieldKey: 'PaymentType' },
+      ]
+    );
+  }
+
+  if (hasNovaPostErrorCode(error, ['20000201590', '20000203614', '20003604642']) || isPaymentControlUnavailableError(error)) {
+    return createMultipleFieldCorrection(
+      [
+        'Не вдалося створити ТТН.',
+        'На цьому акаунті Нової пошти недоступний контроль оплати.',
+        'Оберіть інший тип оплати або інший кабінет НП.',
+      ].join('\n'),
+      [
+        { label: BUTTONS.changePaymentType, fieldKey: 'PaymentType' },
+        { label: BUTTONS.changeCabinet, fieldKey: 'apiKeyAlias' },
+      ]
+    );
+  }
+
+  if (hasNovaPostErrorCode(error, ['20000201553', '20002703085'])) {
+    return createMultipleFieldCorrection(
+      [
+        'Не вдалося створити ТТН.',
+        'Сума контролю оплати не може бути більшою за оголошену вартість.',
+        'Зменште суму оплати або змініть оголошену вартість.',
+      ].join('\n'),
+      [
+        { label: BUTTONS.changePaymentAmount, fieldKey: 'PaymentAmount' },
+        { label: BUTTONS.changeCost, fieldKey: 'Cost' },
+      ]
+    );
+  }
+
+  if (hasNovaPostErrorCode(error, ['20000201642'])) {
+    return createMultipleFieldCorrection(
+      [
+        'Не вдалося створити ТТН.',
+        'Сума контролю оплати разом з оголошеною вартістю завелика для цієї точки доставки.',
+        'Зменште суму оплати, змініть вартість або виберіть іншу точку доставки.',
+      ].join('\n'),
+      [
+        { label: BUTTONS.changePaymentAmount, fieldKey: 'PaymentAmount' },
+        { label: BUTTONS.changeCost, fieldKey: 'Cost' },
+        { label: BUTTONS.changeRecipientDeliveryPoint, fieldKey: 'RecipientAddressName' },
+      ]
+    );
+  }
+
+  if (hasNovaPostErrorCode(error, ['20000200033', '20000200034', '20000200037', '20002703031', '20002703082', '20002703278', '20000203343', '20002703935', '20002703090', '20002703086'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла суму контролю оплати. Введіть іншу суму.',
+      BUTTONS.changePaymentAmount,
+      'PaymentAmount'
+    );
+  }
+
+  if (hasNovaPostErrorCode(error, ['20000200073', '20000200078', '20000200841', '20000203637', '20000203656', '20002703994'])) {
+    return createMultipleFieldCorrection(
+      [
+        'Не вдалося створити ТТН.',
+        'Для цієї точки доставки накладений платіж недоступний.',
+        'Оберіть іншу точку доставки або змініть тип оплати.',
+      ].join('\n'),
+      [
+        { label: BUTTONS.changeRecipientDeliveryPoint, fieldKey: 'RecipientAddressName' },
+        { label: BUTTONS.changePaymentType, fieldKey: 'PaymentType' },
+      ]
+    );
+  }
+
+  if (hasNovaPostErrorCode(error, ['20000200074', '20000200079', '20000200080', '20002702981', '20002702996', '20000301979', '20000301969'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла суму накладеного платежу. Введіть іншу суму.',
+      BUTTONS.changePaymentAmount,
+      'PaymentAmount'
+    );
+  }
 
   if (normalized.includes('recipient warehouse') && normalized.includes('max allowed weight')) {
     return {
@@ -4530,16 +4656,6 @@ function getCreateTtnErrorCorrection(error, data) {
     );
   }
 
-  if (isPaymentControlUnavailableError(error)) {
-    return {
-      message: [
-        'На цьому акаунті Нової пошти недоступний контроль оплати.',
-        'Щоб використовувати цю функцію, потрібно підписати договір з Новою Поштою в особистому кабінеті.',
-      ].join('\n'),
-      choices: getPaymentControlUnavailableChoices(),
-    };
-  }
-
   if (hasAnyText(normalized, ['sender warehouse', 'senderaddress', 'sender address', 'sender warehouse index'])
     || (hasAnyText(normalized, ['відправника']) && hasAnyText(normalized, ['відділен', 'адрес']))) {
     return createSingleFieldCorrection(
@@ -4557,19 +4673,19 @@ function getCreateTtnErrorCorrection(error, data) {
     );
   }
 
-  if (hasAnyText(normalized, ['weight', 'volumeweight', 'volumegeneral', 'dimensions', 'volumetric', 'вага', 'габарит'])) {
-    return createSingleFieldCorrection(
-      'Не вдалося створити ТТН.\nНова пошта не прийняла вагу посилки. Введіть іншу вагу.',
-      BUTTONS.changeWeight,
-      'Weight'
-    );
-  }
-
   if (hasAnyText(normalized, ['afterpayment', 'backwarddelivery', 'redelivery'])) {
     return createSingleFieldCorrection(
       'Не вдалося створити ТТН.\nНова пошта не прийняла суму оплати. Введіть іншу суму.',
       BUTTONS.changePaymentAmount,
       'PaymentAmount'
+    );
+  }
+
+  if (hasAnyText(normalized, ['weight', 'volumeweight', 'volumegeneral', 'dimensions', 'volumetric', 'вага', 'габарит'])) {
+    return createSingleFieldCorrection(
+      'Не вдалося створити ТТН.\nНова пошта не прийняла вагу посилки. Введіть іншу вагу.',
+      BUTTONS.changeWeight,
+      'Weight'
     );
   }
 
@@ -4674,6 +4790,13 @@ function createSingleFieldCorrection(message, label, fieldKey) {
   };
 }
 
+function createMultipleFieldCorrection(message, items) {
+  return {
+    message,
+    choices: items.map((item) => createCorrectionChoice(item.label, item.fieldKey)),
+  };
+}
+
 function createCorrectionChoice(label, fieldKey) {
   return {
     label,
@@ -4688,6 +4811,14 @@ function getFriendlyNovaPostApiMessage(error) {
 
   if (hasAnyText(normalized, ['api key', 'apikey', 'access denied', 'forbidden', 'authorization', 'ключ'])) {
     return 'Нова пошта не прийняла API-ключ. Перевірте кабінет Нової пошти або додайте актуальний ключ.';
+  }
+
+  if (hasNovaPostErrorCode(error, ['20000204637', '20000304638'])) {
+    return 'У цьому кабінеті накладений платіж недоступний. Для ФОП або бізнес-відправника використовуйте контроль оплати.';
+  }
+
+  if (hasAnyText(normalized, ['afterpayment', 'backwarddelivery', 'redelivery', 'контрол', 'післяплат'])) {
+    return 'Нова пошта не прийняла параметри оплати. Перевірте тип оплати, суму та точку доставки.';
   }
 
   if (hasAnyText(normalized, ['not found', 'empty response', 'no data', 'не знайден'])) {
@@ -4807,6 +4938,22 @@ function getNovaPostErrorDetails(error) {
   }
 
   return details.join('; ');
+}
+
+function getNovaPostErrorCodes(error) {
+  if (!Array.isArray(error && error.novaPostErrorCodes)) {
+    return [];
+  }
+
+  return error.novaPostErrorCodes
+    .map((code) => String(code || '').trim())
+    .filter(Boolean);
+}
+
+function hasNovaPostErrorCode(error, codes) {
+  const errorCodes = new Set(getNovaPostErrorCodes(error));
+
+  return codes.some((code) => errorCodes.has(String(code)));
 }
 
 function hasAnyText(text, fragments) {
