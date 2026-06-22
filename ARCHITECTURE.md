@@ -136,11 +136,13 @@ GoodsCRM integration:
 1. A logged-in user enters one or more shop `Код Telegram` values through `Коди магазинів` in settings or `/crmshop code`.
 2. The bot resolves the code through `POST /api/bot/shops/resolve`.
 3. The bot posts the optional Telegram identity link to `POST /api/bot/telegram-links` and stores a local cache under `telegramUserId:chatId`.
-4. When a Nova Poshta cabinet is saved and a CRM shop is connected, the bot sends it to `POST /api/bot/fops`, stores the returned `fop.id` under that cabinet and shop `refCode`, and never prints the full key.
-5. During guided TTN creation, the user chooses one connected shop by the CRM shop name, and the selected `refCode` plus default FOP are stored on the TTN draft.
-6. After a TTN is created in Nova Poshta and saved locally, the bot sends it to `POST /api/bot/ttns` with the selected `refCode`, the cabinet-specific `fopId` when known, and sender details.
-7. A user can also submit one or many ready TTN numbers through `/crmttn` or `Передати ТТН у CRM`; the bot reuses the last selected shop.
-8. CRM sync success or failure is stored on the shipment as `shipment.crm`; CRM errors do not undo Nova Poshta TTN creation.
+4. The bot pulls shop-scoped Nova Poshta cabinets from `POST /api/bot/shops/fops` for that exact `refCode` and imports them into the runtime store. The CRM must return only FOPs linked to the selected shop, not all client FOPs.
+5. Non-admin users see their own local cabinets and cabinets linked to their connected shop codes. Imported CRM cabinets are selected automatically when the current selected cabinet is not linked to the connected shop.
+6. When a Nova Poshta cabinet is saved in the bot and a CRM shop is connected, the bot sends it to `POST /api/bot/fops`, stores the returned `fop.id` under that cabinet and shop `refCode`, and never prints the full key.
+7. During guided TTN creation, the user chooses one connected shop by the CRM shop name, and the selected `refCode` plus default FOP are stored on the TTN draft.
+8. After a TTN is created in Nova Poshta and saved locally, the bot sends it to `POST /api/bot/ttns` with the selected `refCode`, the cabinet-specific `fopId` when known, and sender details.
+9. A user can also submit one or many ready TTN numbers through `/crmttn` or `Передати ТТН у CRM`; the bot reuses the last selected shop.
+10. CRM sync success or failure is stored on the shipment as `shipment.crm`; CRM errors do not undo Nova Poshta TTN creation.
 
 ## Validation
 

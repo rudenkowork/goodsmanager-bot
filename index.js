@@ -44,6 +44,7 @@ const {
 } = require('./src/store');
 const {
   DEFAULT_SOURCE_LABEL,
+  getGoodsCrmShopFops,
   isGoodsCrmConfigured,
   linkTelegramToGoodsCrmShop,
   normalizeGoodsCrmRefCode,
@@ -981,6 +982,10 @@ async function startWarehousesFlow(msg) {
 async function startCreateTtnFlow(msg) {
   assertLoggedIn(msg);
   const store = readStore();
+  const refreshed = await refreshConnectedGoodsCrmShopApiKeys(msg, store);
+  if (refreshed) {
+    await writeStore(store);
+  }
   const aliases = getAvailableApiKeyAliases(msg, store);
 
   if (!aliases.length) {
@@ -1449,6 +1454,9 @@ async function connectGoodsCrmShop(msg, refCodeInput, options = {}) {
     const store = readStore();
     const selectedAlias = store.selectedApiKeyByUser[user.login] || '';
     const fopSyncLine = await syncApiKeyFopToGoodsCrm(msg, store, selectedAlias);
+    const importLine = await syncGoodsCrmShopApiKeysToBot(msg, store, shop.refCode || refCode, {
+      selectDefault: true,
+    });
 
     delete store.flows[String(msg.from.id)];
     await writeStore(store);
@@ -1461,6 +1469,7 @@ async function connectGoodsCrmShop(msg, refCodeInput, options = {}) {
         defaultFop && defaultFop.name ? `ФОП за замовчуванням: ${defaultFop.name}` : '',
         linked ? 'Звʼязок із цим Telegram-чатом збережено в CRM.' : '',
         fopSyncLine,
+        importLine,
         'Під час створення ТТН оберіть цей магазин зі списку.',
       ].filter(Boolean).join('\n'),
       menuOptions(msg)
@@ -1526,6 +1535,202 @@ async function saveGoodsCrmTelegramLink(msg, user, refCode, shop, defaultFop) {
 
   await writeStore(store);
   return linkedInCrm;
+}
+
+async function syncGoodsCrmShopApiKeysToBot(msg, store, refCodeInput, options = {}) {
+  const user = assertLoggedIn(msg);
+  const refCode = normalizeGoodsCrmRefCode(refCodeInput);
+
+  if (!refCode || !isGoodsCrmConfigured()) {
+    return '';
+  }
+
+  try {
+    const result = await getGoodsCrmShopFops({
+      refCode,
+      telegramUserId: msg.from.id,
+      chatId: msg.chat.id,
+      username: msg.from && msg.from.username || '',
+    });
+    const shop = result.shop || {};
+    const fops = result.fops || [];
+
+    if (!fops.length) {
+      return 'CRM: у цьому магазині ще немає кабінетів Нової пошти.';
+    }
+
+    const imported = fops.map((fop) => rememberGoodsCrmFopApiKey(store, msg, user, refCode, shop, fop));
+    if (options.selectDefault !== false) {
+      selectImportedGoodsCrmApiKey(msg, store, user, refCode, imported, result.defaultFop);
+    }
+
+    return `CRM: синхронізовано кабінети Нової пошти з магазину: ${imported.length}.`;
+  } catch (error) {
+    console.warn(`GoodsCRM shop API key import failed for "${refCode}":`, error.message);
+
+    if (error.goodsCrmCode === 'not_found' || error.goodsCrmCode === 'method_not_allowed') {
+      return 'CRM: магазин підключено, але CRM ще не віддала список кабінетів Нової пошти.';
+    }
+
+    return `CRM: магазин підключено, але кабінети Нової пошти не імпортовано. ${getFriendlyGoodsCrmMessage(error)}`;
+  }
+}
+
+async function refreshConnectedGoodsCrmShopApiKeys(msg, store) {
+  if (!isGoodsCrmConfigured()) {
+    return false;
+  }
+
+  const mappings = getGoodsCrmShopMappings(msg);
+
+  if (!mappings.length) {
+    return false;
+  }
+
+  const before = JSON.stringify({
+    apiKeys: store.apiKeys,
+    selectedApiKeyByUser: store.selectedApiKeyByUser,
+  });
+
+  for (const mapping of mappings) {
+    await syncGoodsCrmShopApiKeysToBot(msg, store, mapping.refCode, {
+      selectDefault: false,
+    });
+  }
+
+  const after = JSON.stringify({
+    apiKeys: store.apiKeys,
+    selectedApiKeyByUser: store.selectedApiKeyByUser,
+  });
+
+  return before !== after;
+}
+
+function rememberGoodsCrmFopApiKey(store, msg, user, refCode, shop, fop) {
+  const alias = findGoodsCrmFopApiKeyAlias(store, refCode, fop) || createGoodsCrmFopApiKeyAlias(store, refCode, fop);
+  const now = new Date().toISOString();
+  const existing = store.apiKeys[alias] || {};
+  const record = Object.assign({}, existing, {
+    apiKey: fop.apiKey,
+    createdBy: existing.createdBy || `crm:${refCode}`,
+    createdAt: existing.createdAt || now,
+    source: existing.source || 'crm',
+    updatedAt: now,
+    crmImportedBy: user.login,
+    crmImportedAt: now,
+  });
+
+  record.crmShopRefCodes = mergeCrmShopRefCodes(record.crmShopRefCodes, refCode);
+  record.crmFopsByRefCode = record.crmFopsByRefCode && typeof record.crmFopsByRefCode === 'object' && !Array.isArray(record.crmFopsByRefCode)
+    ? record.crmFopsByRefCode
+    : {};
+  record.crmFopsByRefCode[refCode] = {
+    refCode,
+    crmShopId: shop.id || '',
+    shopName: shop.name || '',
+    fopId: fop.id || '',
+    fopName: fop.name || alias,
+    apiKeyLast4: fop.apiKeyLast4 || fop.apiKey.slice(-4),
+    isDefault: Boolean(fop.isDefault),
+    syncedAt: now,
+  };
+
+  store.apiKeys[alias] = record;
+
+  if (fop.isDefault) {
+    updateStoredGoodsCrmMappingFop(store, msg, refCode, {
+      id: fop.id || '',
+      name: fop.name || alias,
+    });
+  }
+
+  return {
+    alias,
+    fopId: fop.id || '',
+    isDefault: Boolean(fop.isDefault),
+  };
+}
+
+function findGoodsCrmFopApiKeyAlias(store, refCode, fop) {
+  for (const alias of Object.keys(store.apiKeys || {})) {
+    const record = store.apiKeys[alias];
+    const fopLink = record && record.crmFopsByRefCode && record.crmFopsByRefCode[refCode];
+
+    if (fop.id && fopLink && fopLink.fopId === fop.id) {
+      return alias;
+    }
+  }
+
+  for (const alias of Object.keys(store.apiKeys || {})) {
+    const record = store.apiKeys[alias];
+
+    if (record && record.apiKey === fop.apiKey) {
+      return alias;
+    }
+  }
+
+  return '';
+}
+
+function createGoodsCrmFopApiKeyAlias(store, refCode, fop) {
+  const baseAlias = normalizeImportedApiKeyAlias(fop.name) || normalizeImportedApiKeyAlias(`crm ${refCode} ${fop.apiKeyLast4 || fop.apiKey.slice(-4)}`);
+  const suffixes = [
+    '',
+    normalizeImportedApiKeyAlias(refCode),
+    normalizeImportedApiKeyAlias(fop.apiKeyLast4 || fop.apiKey.slice(-4)),
+    normalizeImportedApiKeyAlias(fop.id.slice(-6)),
+  ].filter((value, index, values) => values.indexOf(value) === index);
+
+  for (const suffix of suffixes) {
+    const alias = suffix ? `${baseAlias} ${suffix}` : baseAlias;
+
+    if (alias && !store.apiKeys[alias]) {
+      return alias;
+    }
+  }
+
+  let index = 2;
+  while (store.apiKeys[`${baseAlias} ${index}`]) {
+    index += 1;
+  }
+
+  return `${baseAlias} ${index}`;
+}
+
+function normalizeImportedApiKeyAlias(value) {
+  return normalizeAlias(value).replace(/\s+/g, ' ').trim();
+}
+
+function mergeCrmShopRefCodes(existing, refCode) {
+  const values = Array.isArray(existing) ? existing : [];
+  const refCodes = new Set(values.map(normalizeGoodsCrmRefCode).filter(Boolean));
+  refCodes.add(refCode);
+  return Array.from(refCodes).sort();
+}
+
+function selectImportedGoodsCrmApiKey(msg, store, user, refCode, imported, defaultFop) {
+  const aliases = getAvailableApiKeyAliases(msg, store);
+  const selectedAlias = store.selectedApiKeyByUser[user.login];
+  const selectedRecord = selectedAlias ? store.apiKeys[selectedAlias] : null;
+  const selectedLink = selectedRecord && selectedRecord.crmFopsByRefCode && selectedRecord.crmFopsByRefCode[refCode];
+
+  if (selectedAlias && aliases.includes(selectedAlias) && selectedLink) {
+    return;
+  }
+
+  const defaultFopId = defaultFop && defaultFop.id || '';
+  const preferred = imported.find((item) => item.fopId && item.fopId === defaultFopId)
+    || imported.find((item) => item.isDefault)
+    || imported[0];
+
+  if (preferred && aliases.includes(preferred.alias)) {
+    store.selectedApiKeyByUser[user.login] = preferred.alias;
+    return;
+  }
+
+  if (aliases.length) {
+    store.selectedApiKeyByUser[user.login] = aliases[0];
+  }
 }
 
 async function syncApiKeyFopToGoodsCrm(msg, store, alias) {
@@ -1748,7 +1953,7 @@ async function handleDefaultSenderWarehouseChoice(msg, flow, text) {
     return;
   }
 
-  const key = getApiKeyForCreateFlow(flow);
+  const key = getApiKeyForCreateFlow(flow, msg);
   const warehouse = await findWarehouseByNumber(key.apiKey, flow.data[field.cityKey], 'branch', warehouseNumber);
 
   if (!warehouse) {
@@ -2003,7 +2208,7 @@ async function handleCreateTtnFlowInput(msg, flow, text) {
 }
 
 async function handleCreateTtnPaymentType(msg, flow, value) {
-  const key = getApiKeyForCreateFlow(flow);
+  const key = getApiKeyForCreateFlow(flow, msg);
 
   flow.data.PaymentType = value;
   flow.data.PaymentTypeLabel = getPaymentTypeLabel(value);
@@ -3172,7 +3377,7 @@ function applyGoodsCrmShopToCreateFlow(flow, mapping) {
 }
 
 async function offerAreaChoices(msg, flow, field, page) {
-  const key = getApiKeyForCreateFlow(flow);
+  const key = getApiKeyForCreateFlow(flow, msg);
   const response = await callNovaPost(key.apiKey, 'Address', 'getAreas', {});
   const areas = response.data.map((area) => ({
     label: area.Description,
@@ -3205,7 +3410,7 @@ async function offerSettlementTypeChoices(msg, flow, field) {
 }
 
 async function offerCityChoices(msg, flow, field, page) {
-  const key = getApiKeyForCreateFlow(flow);
+  const key = getApiKeyForCreateFlow(flow, msg);
   const areaRef = flow.data[field.areaKey];
 
   if (!areaRef) {
@@ -3394,7 +3599,7 @@ async function handleCreateTtnWarehouseChoice(msg, flow, text) {
     return;
   }
 
-  const key = getApiKeyForCreateFlow(flow);
+  const key = getApiKeyForCreateFlow(flow, msg);
   const selectedDeliveryType = flow.data[`${field.key}DeliveryType`] || 'branch';
   const warehouse = await findWarehouseByNumber(key.apiKey, flow.data[field.cityKey], selectedDeliveryType, warehouseNumber);
 
@@ -3578,7 +3783,7 @@ async function handleCreateTtnSenderWarehouseDefaultChoice(msg, flow, text) {
 }
 
 async function offerSenderChoices(msg, flow, field) {
-  const key = getApiKeyForCreateFlow(flow);
+  const key = getApiKeyForCreateFlow(flow, msg);
   const senders = await fetchSenderChoices(key.apiKey);
 
   if (!senders.length) {
@@ -3631,7 +3836,7 @@ async function handleCreateTtnSenderChoice(msg, flow, text) {
 }
 
 async function offerSenderContactChoices(msg, flow, field) {
-  const key = getApiKeyForCreateFlow(flow);
+  const key = getApiKeyForCreateFlow(flow, msg);
   const senderRef = flow.data[field.senderKey];
 
   if (!senderRef) {
@@ -4451,7 +4656,7 @@ function removeDefaultSenderWarehouseValue(flow, field) {
 
 async function finishCreateTtnFlow(msg, flow) {
   const data = flow.data;
-  const key = getApiKeyForCreateFlow({ data });
+  const key = getApiKeyForCreateFlow({ data }, msg);
 
   await sendText(msg.chat.id, 'Дані зібрано ✅ Створюю ТТН.');
 
@@ -5193,6 +5398,10 @@ async function handleDeleteKey(msg, args) {
 async function handleKeys(msg) {
   assertLoggedIn(msg);
   const store = readStore();
+  const refreshed = await refreshConnectedGoodsCrmShopApiKeys(msg, store);
+  if (refreshed) {
+    await writeStore(store);
+  }
   const aliases = getAvailableApiKeyAliases(msg, store);
 
   if (!aliases.length) {

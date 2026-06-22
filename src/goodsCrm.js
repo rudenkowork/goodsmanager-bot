@@ -38,6 +38,27 @@ async function resolveGoodsCrmShop(refCode) {
   };
 }
 
+async function getGoodsCrmShopFops(payload) {
+  const refCode = normalizeGoodsCrmRefCode(payload && payload.refCode);
+
+  if (!refCode) {
+    throw createGoodsCrmError('missing_ref_code', 'GoodsCRM shop code is missing.');
+  }
+
+  const result = await callGoodsCrm('/api/bot/shops/fops', {
+    refCode,
+    telegramUserId: String(payload.telegramUserId || ''),
+    chatId: String(payload.chatId || payload.telegramChatId || ''),
+    username: String(payload.username || ''),
+  });
+
+  return {
+    shop: result && result.shop || null,
+    defaultFop: normalizeGoodsCrmFop(result && result.defaultFop),
+    fops: normalizeGoodsCrmFops(result && result.fops),
+  };
+}
+
 async function linkTelegramToGoodsCrmShop(payload) {
   const refCode = normalizeGoodsCrmRefCode(payload && payload.refCode);
 
@@ -281,6 +302,31 @@ function normalizeGoodsCrmFop(value) {
   };
 }
 
+function normalizeGoodsCrmFops(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map(normalizeGoodsCrmFopWithApiKey)
+    .filter((item) => item.name && item.apiKey);
+}
+
+function normalizeGoodsCrmFopWithApiKey(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return {
+    id: String(value.id || ''),
+    name: String(value.name || ''),
+    apiKey: String(value.apiKey || '').trim(),
+    apiKeyLast4: String(value.apiKeyLast4 || ''),
+    isDefault: Boolean(value.isDefault),
+    updatedAt: String(value.updatedAt || ''),
+  };
+}
+
 function normalizeTtnPayload(payload) {
   if (payload && Array.isArray(payload.ttns)) {
     return payload.ttns.map(normalizeTtnItem).filter((item) => item.ttn);
@@ -324,6 +370,7 @@ function normalizeTtnItem(item) {
 
 module.exports = {
   DEFAULT_SOURCE_LABEL,
+  getGoodsCrmShopFops,
   isGoodsCrmConfigured,
   linkTelegramToGoodsCrmShop,
   normalizeGoodsCrmRefCode,
